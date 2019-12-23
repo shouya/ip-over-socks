@@ -1,0 +1,17 @@
+[package]
+name = "tun2socks"
+version = "0.1.0"
+authors = ["Shou Ya <shouya@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+failure = "0.1"
+tokio = {version = "0.2", features=["tcp", "udp", "sync"]}
+bytes = "0.5"
+log = "0.4"
+etherparse = "0.9"
+
+[dependencies.tun]
+git = "https://github.com/meh/rust-tun"
+branch = "master"
+features = ["mio", "async"]
