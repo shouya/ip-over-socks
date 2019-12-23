@@ -11,7 +11,7 @@ pub struct TunError(SyncFailure<tun::Error>);
 pub struct UnsupportedPacket;
 
 impl From<tun::Error> for TunError {
-    fn from(e: tun::Error) -> TunError {
-        TunError(SyncFailure::new(e))
-    }
+  fn from(e: tun::Error) -> TunError {
+    TunError(SyncFailure::new(e))
+  }
 }

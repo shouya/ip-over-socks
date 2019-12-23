@@ -23,37 +23,40 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = initialize_config();
+  let config = initialize_config();
 
-    // setup tun
-    let (tcp_chan_tx, _tcp_chan_rx) = mpsc::channel(0);
-    let (udp_chan_tx, _udp_chan_rx) = mpsc::channel(0);
-    let tun = Tun::setup(&config, tcp_chan_tx, udp_chan_tx).await?;
+  // destination map
+  let dst_map = Arc::new(DstMap::new());
 
-    // setup tproxy
-    let dst_map = Arc::new(DstMap::new());
-    let tproxy = Tproxy::setup(&config, dst_map.clone()).await?;
+  // setup tun
+  let (tcp_chan_tx, _tcp_chan_rx) = mpsc::channel(0);
+  let (udp_chan_tx, _udp_chan_rx) = mpsc::channel(0);
+  let tun = Tun::setup(&config, tcp_chan_tx, udp_chan_tx).await?;
 
-    // start processing packets from tun
-    tokio::spawn(async move { tun.start().await });
+  // setup tproxy
+  let tproxy = Tproxy::setup(&config, dst_map.clone()).await?;
 
-    Ok(())
+  // start processing packets from tun
+  tokio::spawn(async move { tun.start().await });
+  tokio::spawn(async move { tproxy.start().await });
+
+  Ok(())
 }
 
 fn initialize_config() -> Config {
-    use config::{TproxyConfig, TunConfig};
-    let tun_config = TunConfig {
-        address: [10, 0, 0, 1].into(),
-        netmask: [255, 255, 0, 0].into(),
-        mtu: 1500,
-    };
-    let tproxy_config = TproxyConfig {
-        bind_addr: ([10, 0, 0, 2], 10000).into(),
-    };
-    let socks_server_addr = ([127, 0, 0, 1], 1080).into();
-    Config {
-        tun_config,
-        tproxy_config,
-        socks_server_addr,
-    }
+  use config::{TproxyConfig, TunConfig};
+  let tun_config = TunConfig {
+    address: [10, 0, 0, 1].into(),
+    netmask: [255, 255, 0, 0].into(),
+    mtu: 1500,
+  };
+  let tproxy_config = TproxyConfig {
+    bind_addr: ([10, 0, 0, 2], 10000).into(),
+  };
+  let socks_server_addr = ([127, 0, 0, 1], 1080).into();
+  Config {
+    tun_config,
+    tproxy_config,
+    socks_server_addr,
+  }
 }
