@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::error::*;
+use crate::error::Result;
 
 // map from src port to actual dest addr,
 // as the info was erased while the packet is been redirected to tproxy

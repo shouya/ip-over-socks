@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
-use crate::error::*;
+use crate::error::Result;
 use crate::proto::socks5;
 
 #[derive(Clone)]

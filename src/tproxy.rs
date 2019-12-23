@@ -4,7 +4,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::config::Config;
 use crate::dst_map::DstMap;
-use crate::error::*;
+use crate::error::Result;
 use crate::socks::SocksServer;
 
 pub struct Client {
@@ -15,7 +15,6 @@ pub struct Client {
   pub src: SocketAddr,
 }
 
-// transparent proxy
 pub struct Tproxy {
   listener: TcpListener,
   socks_server: SocksServer,

@@ -15,7 +15,7 @@ mod tun;
 
 use crate::config::Config;
 use crate::dst_map::DstMap;
-use crate::error::*;
+use crate::error::Result;
 use crate::tproxy::Tproxy;
 use crate::tun::Tun;
 

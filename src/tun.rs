@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 
 use crate::config::{Config, TunConfig};
 use crate::dst_map::DstMap;
-use crate::error::*;
+use crate::error::{AddressNotFoundInDstMap, Result, TunError};
 
 use bytes::{Bytes, BytesMut};
 use tokio::io::AsyncReadExt;
