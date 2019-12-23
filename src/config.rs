@@ -1,17 +1,16 @@
-use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct TunConfig {
-  pub address: Ipv4Addr,
+  pub ip: Ipv4Addr,
+  pub dummy_ip: Ipv4Addr,
   pub netmask: Ipv4Addr,
   pub mtu: u16,
 }
 
 #[derive(Debug, Clone)]
 pub struct TproxyConfig {
-  pub bind_addr: SocketAddr,
+  pub bind_port: u16,
 }
 
 #[derive(Debug, Clone)]

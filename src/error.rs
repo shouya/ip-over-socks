@@ -10,6 +10,10 @@ pub struct TunError(SyncFailure<tun::Error>);
 #[fail(display = "unsupported packet")]
 pub struct UnsupportedPacket;
 
+#[derive(Debug, Fail)]
+#[fail(display = "address not found in dst map")]
+pub struct AddressNotFoundInDstMap;
+
 impl From<tun::Error> for TunError {
   fn from(e: tun::Error) -> TunError {
     TunError(SyncFailure::new(e))

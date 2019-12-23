@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::error::*;
 
 // map from src port to actual dest addr,
 // as the info was erased while the packet is been redirected to tproxy
-pub struct DstMap(Mutex<HashMap<u16, SocketAddr>>);
+#[derive(Clone)]
+pub struct DstMap(Arc<Mutex<HashMap<u16, SocketAddr>>>);
 
 impl DstMap {
   pub fn new() -> Self {
-    let map = Mutex::new(HashMap::new());
+    let map = Arc::new(Mutex::new(HashMap::new()));
     DstMap(map)
   }
 

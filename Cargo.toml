@@ -10,6 +10,7 @@ tokio = {version = "0.2", features=["tcp", "udp", "sync"]}
 bytes = "0.5"
 log = "0.4"
 etherparse = "0.9"
+futures = "0.3"
 
 [dependencies.tun]
 git = "https://github.com/meh/rust-tun"
