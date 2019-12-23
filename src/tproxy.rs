@@ -17,7 +17,6 @@ pub struct Client {
 
 // transparent proxy
 pub struct Tproxy {
-  bind_addr: SocketAddr,
   listener: TcpListener,
   socks_server: SocksServer,
   dst_map: DstMap,
@@ -25,14 +24,13 @@ pub struct Tproxy {
 
 impl Tproxy {
   pub async fn setup(conf: &Config, dst_map: &DstMap) -> Result<Self> {
-    let bind_addr = (conf.tun_config.ip, conf.tproxy_config.bind_port).into();
+    let bind_addr = (conf.tun_config.ip, conf.tproxy_config.bind_port);
     let listener = TcpListener::bind(bind_addr).await?;
     let socks_server = SocksServer::new(conf.socks_server_addr);
     let dst_map = dst_map.clone();
 
     Ok(Tproxy {
       socks_server,
-      bind_addr,
       listener,
       dst_map,
     })

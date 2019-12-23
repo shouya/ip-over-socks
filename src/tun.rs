@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 
 use crate::config::{Config, TunConfig};
 use crate::dst_map::DstMap;
@@ -7,9 +7,7 @@ use crate::error::*;
 use bytes::{Bytes, BytesMut};
 use tokio::io::AsyncReadExt;
 
-use etherparse::{
-  IpHeader, Ipv4Header, PacketHeaders, TcpHeader, TransportHeader,
-};
+use etherparse::{IpHeader, PacketHeaders, TransportHeader};
 use rust_tun::{create_as_async, DeviceAsync};
 
 pub struct Tun {
