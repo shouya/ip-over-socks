@@ -24,6 +24,7 @@ pub struct Tproxy {
 impl Tproxy {
   pub async fn setup(conf: &Config, dst_map: &DstMap) -> Result<Self> {
     let bind_addr = (conf.tun_config.ip, conf.tproxy_config.bind_port);
+    dbg!("tproxy bound to {}", &bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
     let socks_server = SocksServer::new(conf.socks_server_addr);
     let dst_map = dst_map.clone();
@@ -37,15 +38,19 @@ impl Tproxy {
 
   pub async fn start(mut self) -> Result<()> {
     loop {
+      dbg!("tproxy working");
       let (socket, peer_addr) = self.listener.accept().await?;
+      dbg!("tproxy accepted");
       match self.dst_map.get(peer_addr.port()).await? {
         None => continue,
         Some(dest) => {
+          dbg!("nat performed");
           let src = peer_addr.clone();
           let client = Client { dest, src, socket };
           let socks_server = self.socks_server.clone();
 
           tokio::spawn(async move {
+            dbg!("redir started");
             Self::forward_to_socks_proxy(socks_server, client)
           })
           .await
@@ -62,6 +67,7 @@ impl Tproxy {
     use futures::future::select;
     use tokio::io::copy;
 
+    dbg!("client!");
     let mut socks_client = socks_server.tcp_connect(client.dest).await?;
     let mut tproxy_client = client.socket;
 

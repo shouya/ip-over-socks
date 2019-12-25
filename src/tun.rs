@@ -1,17 +1,17 @@
-use std::net::Ipv4Addr;
-
 use crate::config::{Config, TunConfig};
 use crate::dst_map::DstMap;
 use crate::error::{AddressNotFoundInDstMap, Result, TunError};
 
-use bytes::{Bytes, BytesMut};
-use tokio::io::AsyncReadExt;
+use bytes::Bytes;
+use futures::stream::StreamExt;
+use futures::Sink;
+use std::net::Ipv4Addr;
 
 use etherparse::{IpHeader, PacketHeaders, TransportHeader};
-use rust_tun::{create_as_async, DeviceAsync};
+use rust_tun::{create_as_async, DeviceAsync, TunPacket};
 
 pub struct Tun {
-  dev: DeviceAsync,
+  dev: Option<DeviceAsync>,
   ip: Ipv4Addr,
   dummy_ip: Ipv4Addr,
   tproxy_port: u16,
@@ -34,7 +34,7 @@ impl Tun {
       config.packet_information(true);
     });
 
-    let dev = create_as_async(&conf).map_err(TunError::from)?;
+    let dev = Some(create_as_async(&conf).map_err(TunError::from)?);
     let TunConfig {
       mtu, ip, dummy_ip, ..
     } = *tun_config;
@@ -53,14 +53,21 @@ impl Tun {
 
   pub async fn start(mut self) -> Result<()> {
     use etherparse::TransportHeader::{Tcp, Udp};
+    let (mut sink, mut stream) = self.dev.take().unwrap().into_framed().split();
 
-    loop {
-      let packet = self.read_packet().await.expect("unable to read packet");
+    while let Some(frame) = stream.next().await {
+      let packet =
+        Self::parse_packet(frame?.get_bytes()).expect("unable to parse packet");
+      dbg!(&packet);
+
       if let Some(packet) = packet {
         match packet.transport {
           Tcp(_) => {
+            println!("Got a tcp packet");
             let new_packet = self.rewrite_tcp_packet(packet).await?;
-            self.send_packet(&new_packet).await?;
+            // dbg!("Rewriting as {:?}", &new_packet);
+            self.send_packet(&new_packet, &mut sink).await?;
+            dbg!("packet sent");
           }
           Udp(_) => {
             println!("udp not supported yet");
@@ -69,13 +76,12 @@ impl Tun {
         };
       }
     }
+    Ok(())
   }
 
-  pub async fn read_packet(&mut self) -> Result<Option<Packet>> {
+  pub fn parse_packet(buf: &[u8]) -> Result<Option<Packet>> {
     use etherparse::IpHeader::Version4;
 
-    let mut buf = BytesMut::with_capacity(self.mtu as usize);
-    let _ = self.dev.read_exact(&mut buf).await?;
     let hdr =
       PacketHeaders::from_ip_slice(&buf).expect("failed to decode packet");
     match (hdr.ip, hdr.transport) {
@@ -98,10 +104,14 @@ impl Tun {
       _ => bail!("unreachable"),
     };
 
-    if ip.source == self.dummy_ip.octets() {
-      Ok(self.rewrite_outgoing_packet(packet).await?)
-    } else if ip.destination == self.dummy_ip.octets() {
+    dbg!(ip.source, self.dummy_ip);
+
+    if ip.destination == self.dummy_ip.octets() {
+      dbg!("recognized as incoming");
       Ok(self.rewrite_incoming_packet(packet).await?)
+    } else if ip.source == self.ip.octets() {
+      dbg!("recognized as outgoing");
+      Ok(self.rewrite_outgoing_packet(packet).await?)
     } else {
       bail!("unrecognized packet");
     }
@@ -177,21 +187,30 @@ impl Tun {
     Ok(packet)
   }
 
-  async fn send_packet(&mut self, packet: &Packet) -> Result<()> {
+  async fn send_packet<S>(
+    &mut self,
+    packet: &Packet,
+    sink: &mut S,
+  ) -> Result<()>
+  where
+    S: Sink<rust_tun::TunPacket> + std::marker::Unpin,
+  {
+    use crate::futures::SinkExt;
     use std::io::Write;
-    use tokio::io::AsyncWriteExt;
 
     let mut buf = Vec::with_capacity(self.mtu as usize);
     packet.ip.write(&mut buf)?;
     packet.transport.write(&mut buf)?;
     Write::write(&mut buf, &packet.payload)?;
 
-    self.dev.write_all(&buf).await?;
-    Ok(())
+    match sink.send(TunPacket::new(buf)).await {
+      Err(_) => bail!("failed to send packet"),
+      Ok(_) => Ok(()),
+    }
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Packet {
   ip: IpHeader,
   transport: TransportHeader,

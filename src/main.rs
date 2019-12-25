@@ -19,6 +19,8 @@ use crate::error::Result;
 use crate::tproxy::Tproxy;
 use crate::tun::Tun;
 
+use futures::try_join;
+
 #[tokio::main]
 async fn main() -> Result<()> {
   let config = initialize_config();
@@ -30,12 +32,15 @@ async fn main() -> Result<()> {
   let tun = Tun::setup(&config, &dst_map).await?;
 
   // setup transparent proxy
-  let tproxy = Tproxy::setup(&config, &dst_map).await?;
 
   // start processing packets from tun
-  tokio::spawn(async move { tun.start().await });
-  tokio::spawn(async move { tproxy.start().await });
+  let tun_fut = tokio::spawn(async move { tun.start().await });
 
+  let tproxy = Tproxy::setup(&config, &dst_map).await?;
+  let tproxy_fut = tokio::spawn(async move { tproxy.start().await });
+
+  let (a, b) = try_join!(tun_fut, tproxy_fut)?;
+  (a?, b?);
   Ok(())
 }
 
@@ -47,8 +52,8 @@ fn initialize_config() -> Config {
     netmask: [255, 255, 0, 0].into(),
     mtu: 1500,
   };
-  let tproxy_config = TproxyConfig { bind_port: 10000 };
-  let socks_server_addr = ([127, 0, 0, 1], 1080).into();
+  let tproxy_config = TproxyConfig { bind_port: 10001 };
+  let socks_server_addr = ([127, 0, 0, 1], 6153).into();
   Config {
     tun_config,
     tproxy_config,
