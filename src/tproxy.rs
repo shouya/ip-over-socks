@@ -51,7 +51,7 @@ impl Tproxy {
 
           tokio::spawn(async move {
             dbg!("redir started");
-            Self::forward_to_socks_proxy(socks_server, client)
+            Self::forward_to_socks_proxy(socks_server, client).await
           })
           .await
           .ok();
