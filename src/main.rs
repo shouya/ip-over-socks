@@ -12,14 +12,16 @@ mod proto;
 mod socks;
 mod tproxy;
 mod tun;
+mod udp_proxy;
 
 use crate::config::Config;
 use crate::dst_map::DstMap;
 use crate::error::Result;
 use crate::tproxy::Tproxy;
 use crate::tun::Tun;
+use crate::udp_proxy::UdpProxy;
 
-use futures::try_join;
+use futures::future;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,20 +34,26 @@ async fn main() -> Result<()> {
   let tun = Tun::setup(&config, &dst_map).await?;
 
   // setup transparent proxy
+  let tproxy = Tproxy::setup(&config, &dst_map).await?;
+
+  // setup udp proxy
+  let udp_proxy = UdpProxy::setup(&config, &dst_map).await?;
 
   // start processing packets from tun
   let tun_fut = tokio::spawn(async move { tun.start().await });
-
-  let tproxy = Tproxy::setup(&config, &dst_map).await?;
   let tproxy_fut = tokio::spawn(async move { tproxy.start().await });
+  let udp_fut = tokio::spawn(async move { udp_proxy.start().await });
 
-  let (a, b) = try_join!(tun_fut, tproxy_fut)?;
-  (a?, b?);
+  let futs = future::join_all(vec![tun_fut, tproxy_fut, udp_fut]).await;
+  futs.into_iter().for_each(|x| {
+    x.expect("failed to resolve future")
+      .expect("error while running server")
+  });
   Ok(())
 }
 
 fn initialize_config() -> Config {
-  use config::{TproxyConfig, TunConfig};
+  use config::{TproxyConfig, TunConfig, UdpProxyConfig};
   let tun_config = TunConfig {
     ip: [10, 0, 0, 1].into(),
     dummy_ip: [10, 0, 0, 2].into(),
@@ -53,10 +61,15 @@ fn initialize_config() -> Config {
     mtu: 1500,
   };
   let tproxy_config = TproxyConfig { bind_port: 10001 };
+  let udp_proxy_config = UdpProxyConfig {
+    bind_port: 10001,
+    recv_buf_size: 8196,
+  };
   let socks_server_addr = ([127, 0, 0, 1], 6153).into();
   Config {
     tun_config,
     tproxy_config,
+    udp_proxy_config,
     socks_server_addr,
   }
 }

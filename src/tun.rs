@@ -7,7 +7,12 @@ use futures::stream::StreamExt;
 use futures::Sink;
 use std::net::Ipv4Addr;
 
-use etherparse::{IpHeader, PacketHeaders, TransportHeader};
+use etherparse::{
+  IpHeader,
+  IpHeader::Version4,
+  PacketHeaders, TransportHeader,
+  TransportHeader::{Tcp, Udp},
+};
 use rust_tun::{create_as_async, DeviceAsync, TunPacket};
 
 pub struct Tun {
@@ -15,6 +20,7 @@ pub struct Tun {
   ip: Ipv4Addr,
   dummy_ip: Ipv4Addr,
   tproxy_port: u16,
+  udp_proxy_port: u16,
   mtu: u16,
   dst_map: DstMap,
 }
@@ -39,6 +45,7 @@ impl Tun {
       mtu, ip, dummy_ip, ..
     } = *tun_config;
     let tproxy_port = config.tproxy_config.bind_port;
+    let udp_proxy_port = config.udp_proxy_config.bind_port;
     let dst_map = dst_map.clone();
 
     Ok(Tun {
@@ -48,11 +55,11 @@ impl Tun {
       dst_map,
       dummy_ip,
       tproxy_port,
+      udp_proxy_port,
     })
   }
 
   pub async fn start(mut self) -> Result<()> {
-    use etherparse::TransportHeader::{Tcp, Udp};
     let (mut sink, mut stream) = self.dev.take().unwrap().into_framed().split();
 
     while let Some(frame) = stream.next().await {
@@ -63,14 +70,12 @@ impl Tun {
       if let Some(packet) = packet {
         match packet.transport {
           Tcp(_) => {
-            println!("Got a tcp packet");
             let new_packet = self.rewrite_tcp_packet(packet).await?;
-            // dbg!("Rewriting as {:?}", &new_packet);
             self.send_packet(&new_packet, &mut sink).await?;
-            dbg!("packet sent");
           }
           Udp(_) => {
-            println!("udp not supported yet");
+            let new_packet = self.rewrite_udp_packet(packet).await?;
+            self.send_packet(&new_packet, &mut sink).await?;
             continue;
           }
         };
@@ -80,8 +85,6 @@ impl Tun {
   }
 
   pub fn parse_packet(buf: &[u8]) -> Result<Option<Packet>> {
-    use etherparse::IpHeader::Version4;
-
     let hdr =
       PacketHeaders::from_ip_slice(&buf).expect("failed to decode packet");
     match (hdr.ip, hdr.transport) {
@@ -98,7 +101,6 @@ impl Tun {
   }
 
   async fn rewrite_tcp_packet(&mut self, packet: Packet) -> Result<Packet> {
-    use etherparse::IpHeader::Version4;
     let ip = match &packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -107,23 +109,18 @@ impl Tun {
     dbg!(ip.source, self.dummy_ip);
 
     if ip.destination == self.dummy_ip.octets() {
-      dbg!("recognized as incoming");
-      Ok(self.rewrite_incoming_packet(packet).await?)
+      Ok(self.rewrite_incoming_tcp_packet(packet).await?)
     } else if ip.source == self.ip.octets() {
-      dbg!("recognized as outgoing");
-      Ok(self.rewrite_outgoing_packet(packet).await?)
+      Ok(self.rewrite_outgoing_tcp_packet(packet).await?)
     } else {
       bail!("unrecognized packet");
     }
   }
 
-  async fn rewrite_outgoing_packet(
+  async fn rewrite_outgoing_tcp_packet(
     &self,
     mut packet: Packet,
   ) -> Result<Packet> {
-    use etherparse::IpHeader::Version4;
-    use etherparse::TransportHeader::Tcp;
-
     let mut ip = match packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -134,7 +131,7 @@ impl Tun {
     };
 
     let dest_addr = (ip.destination, tcp.destination_port).into();
-    self.dst_map.put(tcp.source_port, dest_addr).await?;
+    self.dst_map.put(tcp.source_port, dest_addr).await;
 
     ip.source = self.dummy_ip.octets();
     ip.destination = self.ip.octets();
@@ -148,13 +145,10 @@ impl Tun {
     Ok(packet)
   }
 
-  async fn rewrite_incoming_packet(
+  async fn rewrite_incoming_tcp_packet(
     &self,
     mut packet: Packet,
   ) -> Result<Packet> {
-    use etherparse::IpHeader::Version4;
-    use etherparse::TransportHeader::Tcp;
-
     let mut ip = match packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -167,7 +161,7 @@ impl Tun {
     let dest_addr = self
       .dst_map
       .get(tcp.destination_port)
-      .await?
+      .await
       .ok_or(AddressNotFoundInDstMap)?;
 
     let dest_ipv4 = match dest_addr.ip() {
@@ -184,6 +178,87 @@ impl Tun {
 
     packet.ip = Version4(ip);
     packet.transport = Tcp(tcp);
+    Ok(packet)
+  }
+
+  async fn rewrite_udp_packet(&mut self, packet: Packet) -> Result<Packet> {
+    let ip = match &packet.ip {
+      Version4(hdr) => hdr,
+      _ => bail!("unreachable"),
+    };
+
+    dbg!(ip.source, self.dummy_ip);
+
+    if ip.destination == self.dummy_ip.octets() {
+      Ok(self.rewrite_incoming_udp_packet(packet).await?)
+    } else if ip.source == self.ip.octets() {
+      Ok(self.rewrite_outgoing_udp_packet(packet).await?)
+    } else {
+      bail!("unrecognized packet");
+    }
+  }
+
+  async fn rewrite_outgoing_udp_packet(
+    &self,
+    mut packet: Packet,
+  ) -> Result<Packet> {
+    let mut ip = match packet.ip {
+      Version4(hdr) => hdr,
+      _ => bail!("unreachable"),
+    };
+    let mut udp = match packet.transport {
+      Udp(hdr) => hdr,
+      _ => bail!("unreachable"),
+    };
+
+    let dest_addr = (ip.destination, udp.destination_port).into();
+    self.dst_map.put(udp.source_port, dest_addr).await;
+
+    ip.source = self.dummy_ip.octets();
+    ip.destination = self.ip.octets();
+    udp.destination_port = self.udp_proxy_port;
+
+    ip.header_checksum = ip.calc_header_checksum()?;
+    udp.checksum = udp.calc_checksum_ipv4(&ip, &packet.payload)?;
+
+    packet.ip = Version4(ip);
+    packet.transport = Udp(udp);
+    Ok(packet)
+  }
+
+  async fn rewrite_incoming_udp_packet(
+    &self,
+    mut packet: Packet,
+  ) -> Result<Packet> {
+    let mut ip = match packet.ip {
+      Version4(hdr) => hdr,
+      _ => bail!("unreachable"),
+    };
+    let mut udp = match packet.transport {
+      Udp(hdr) => hdr,
+      _ => bail!("unreachable"),
+    };
+    use std::net::IpAddr::V4;
+    let dest_addr = self
+      .dst_map
+      .get(udp.destination_port)
+      .await
+      .ok_or(AddressNotFoundInDstMap)?;
+
+    let dest_ipv4 = match dest_addr.ip() {
+      V4(v4) => v4,
+      _ => bail!("unreachable"),
+    };
+
+    ip.source = dest_ipv4.octets();
+    ip.destination = self.ip.octets();
+    udp.source_port = dest_addr.port();
+
+    ip.header_checksum = ip.calc_header_checksum().unwrap();
+    udp.checksum = udp.calc_checksum_ipv4(&ip, &packet.payload).unwrap();
+
+    packet.ip = Version4(ip);
+    packet.transport = Udp(udp);
     Ok(packet)
   }
 
