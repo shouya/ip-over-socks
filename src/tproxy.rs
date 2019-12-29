@@ -11,7 +11,6 @@ pub struct Client {
   pub socket: TcpStream,
   // the actual destination
   pub dest: SocketAddr,
-  // the source
   pub src: SocketAddr,
 }
 
@@ -47,9 +46,7 @@ impl Tproxy {
 
           tokio::spawn(async move {
             Self::forward_to_socks_proxy(socks_server, client).await
-          })
-          .await
-          .ok();
+          });
         }
       }
     }

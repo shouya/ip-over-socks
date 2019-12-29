@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 failure = "0.1"
-tokio = {version = "0.2", features=["tcp", "udp", "sync"]}
+tokio = {version = "0.2", features=["tcp", "udp", "sync", "time"]}
 bytes = "0.5"
 log = "0.4"
 etherparse = "0.9"

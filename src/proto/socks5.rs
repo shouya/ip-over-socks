@@ -227,7 +227,7 @@ pub enum Address {
 }
 
 impl Address {
-  pub async fn read_from<R>(stream: &mut R) -> Result<Address, Error>
+  pub async fn read_from<R>(mut stream: R) -> Result<Address, Error>
   where
     R: AsyncRead + Unpin,
   {
@@ -771,7 +771,7 @@ impl UdpAssociateHeader {
   }
 
   /// Read from a reader
-  pub async fn read_from<R>(r: &mut R) -> Result<UdpAssociateHeader, Error>
+  pub async fn read_from<R>(mut r: R) -> Result<UdpAssociateHeader, Error>
   where
     R: AsyncRead + Unpin,
   {

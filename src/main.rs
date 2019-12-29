@@ -62,10 +62,11 @@ fn initialize_config() -> Config {
   };
   let tproxy_config = TproxyConfig { bind_port: 10001 };
   let udp_proxy_config = UdpProxyConfig {
+    broker_bind_port: 10002,
     bind_port: 10001,
     recv_buf_size: 8196,
   };
-  let socks_server_addr = ([127, 0, 0, 1], 6153).into();
+  let socks_server_addr = ([127, 0, 0, 1], 6155).into();
   Config {
     tun_config,
     tproxy_config,

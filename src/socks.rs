@@ -29,7 +29,6 @@ impl SocksServer {
     handshake_req.write_to(&mut client).await?;
 
     let handshake_resp = HandshakeResponse::read_from(&mut client).await?;
-
     ensure!(
       handshake_resp.chosen_method == SOCKS5_AUTH_METHOD_NONE,
       "auth_none not supported!"
@@ -71,7 +70,10 @@ impl SocksServer {
 
     req.write_to(&mut client).await?;
     // it crashes here, I may need to check on the response from socks server
-    let resp = socks5::TcpResponseHeader::read_from(&mut client).await?;
+    let resp = match socks5::TcpResponseHeader::read_from(&mut client).await {
+      Ok(resp) => resp,
+      e => bail!("failed here: {:?}", e),
+    };
     ensure!(
       resp.reply == Succeeded,
       "socks server responded with non-successful resp (udp associate)"
@@ -90,5 +92,14 @@ impl SocksServer {
     let mut buf = BytesMut::new();
     hdr.write_to_buf(&mut buf);
     buf
+  }
+
+  // returns (udp_assoc_hdr_len, dst_addr)
+  pub fn parse_udp_assoc_header(bytes: &[u8]) -> Option<(usize, SocketAddr)> {
+    use futures::executor::block_on;
+    use std::net::ToSocketAddrs;
+    let hdr = block_on(socks5::UdpAssociateHeader::read_from(bytes)).ok()?;
+    let addr = hdr.address.to_socket_addrs().ok()?.next()?;
+    Some((hdr.serialized_len(), addr))
   }
 }
