@@ -517,6 +517,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "transient-hashmap"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aeb4b191d033a35edfce392a38cdcf9790b6cebcb30fa690c312c29da4dc433e"
+
+[[package]]
 name = "tun"
 version = "0.4.4"
 source = "git+https://github.com/meh/rust-tun#56ef20c3406301807c2964e112ceb06d7b04d0ca"
@@ -541,6 +547,7 @@ dependencies = [
  "futures",
  "log",
  "tokio",
+ "transient-hashmap",
  "tun",
 ]
 

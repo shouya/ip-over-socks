@@ -1,10 +1,11 @@
 use crate::config::{Config, TunConfig};
 use crate::dst_map::DstMap;
 use crate::error::{AddressNotFoundInDstMap, Result, TunError};
+use crate::udp_packet::UdpPacketSource;
 
 use bytes::Bytes;
 use futures::stream::StreamExt;
-use futures::Sink;
+use futures::{Sink, Source};
 use std::net::Ipv4Addr;
 
 use etherparse::{
@@ -15,98 +16,58 @@ use etherparse::{
 };
 use rust_tun::{create_as_async, DeviceAsync, TunPacket};
 
-pub struct Tun {
+struct TunSource {
+  pub source: Box<dyn Source<TunSource> + Unpin>,
+}
+
+struct TunSink {
+  sink: Box<dyn Sink<TunPacket> + Unpin>,
   dev: Option<DeviceAsync>,
+  mtu: u16,
+}
+
+impl TunSink {
+  pub async fn start<S>(mut self, packet_source: S) -> Result<!>
+  where
+    S: Source<rust_tun::TunPacket> + std::marker::Unpin,
+  {
+    use crate::futures::SinkExt;
+
+    while let Some(packet) = packet_source.next() {
+      match self.sink.send(packet.into()).await {
+        Err(_) => bail!("failed to send packet"),
+        Ok(_) => Ok(()),
+      };
+    }
+    panic!("packet source interrupted")
+  }
+}
+
+struct PacketRewriter {
   ip: Ipv4Addr,
   dummy_ip: Ipv4Addr,
   tproxy_port: u16,
   udp_proxy_port: u16,
-  mtu: u16,
-  dst_map: DstMap,
+  tcp_nat: DstMap,
+  udp_nat: DstMap,
 }
 
-impl Tun {
-  pub async fn setup(config: &Config, dst_map: &DstMap) -> Result<Self> {
-    let Config { tun_config, .. } = config;
-    let mut conf = rust_tun::Configuration::default();
-    conf
-      .address(tun_config.ip)
-      .netmask(tun_config.netmask)
-      .mtu(tun_config.mtu as i32)
-      .up();
-
-    #[cfg(target_os = "linux")]
-    config.platform(|config| {
-      config.packet_information(true);
-    });
-
-    let dev = Some(create_as_async(&conf).map_err(TunError::from)?);
-    let TunConfig {
-      mtu, ip, dummy_ip, ..
-    } = *tun_config;
-    let tproxy_port = config.tproxy_config.bind_port;
-    let udp_proxy_port = config.udp_proxy_config.bind_port;
-    let dst_map = dst_map.clone();
-
-    Ok(Tun {
-      dev,
-      ip,
-      mtu,
-      dst_map,
-      dummy_ip,
-      tproxy_port,
-      udp_proxy_port,
-    })
-  }
-
-  pub async fn start(mut self) -> Result<()> {
-    let (mut sink, mut stream) = self.dev.take().unwrap().into_framed().split();
-
-    while let Some(frame) = stream.next().await {
-      let packet =
-        Self::parse_packet(frame?.get_bytes()).expect("unable to parse packet");
-      dbg!(&packet);
-
-      if let Some(packet) = packet {
-        match packet.transport {
-          Tcp(_) => {
-            let new_packet = self.rewrite_tcp_packet(packet).await?;
-            self.send_packet(&new_packet, &mut sink).await?;
-          }
-          Udp(_) => {
-            let new_packet = self.rewrite_udp_packet(packet).await?;
-            self.send_packet(&new_packet, &mut sink).await?;
-            continue;
-          }
-        };
-      }
-    }
-    Ok(())
-  }
-
-  pub fn parse_packet(buf: &[u8]) -> Result<Option<Packet>> {
-    let hdr =
-      PacketHeaders::from_ip_slice(&buf).expect("failed to decode packet");
-    match (hdr.ip, hdr.transport) {
-      (Some(ip @ Version4(_)), Some(transport)) => {
-        let payload = Bytes::copy_from_slice(hdr.payload);
-        Ok(Some(Packet {
-          ip,
-          transport,
-          payload,
-        }))
-      }
-      _ => Ok(None),
+impl PacketRewriter {
+  pub async fn rewrite(
+    &mut self,
+    packet: IpPacket,
+  ) -> Result<Option<IpPacket>> {
+    match packet.transport {
+      Tcp(_) => Ok(Some(self.rewrite_tcp_packet(packet).await?)),
+      Udp(_) => Ok(Some(self.rewrite_udp_packet(packet).await?)),
     }
   }
 
-  async fn rewrite_tcp_packet(&mut self, packet: Packet) -> Result<Packet> {
+  async fn rewrite_tcp_packet(&mut self, packet: IpPacket) -> Result<IpPacket> {
     let ip = match &packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
     };
-
-    dbg!(ip.source, self.dummy_ip);
 
     if ip.destination == self.dummy_ip.octets() {
       Ok(self.rewrite_incoming_tcp_packet(packet).await?)
@@ -119,8 +80,8 @@ impl Tun {
 
   async fn rewrite_outgoing_tcp_packet(
     &self,
-    mut packet: Packet,
-  ) -> Result<Packet> {
+    mut packet: IpPacket,
+  ) -> Result<IpPacket> {
     let mut ip = match packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -131,7 +92,7 @@ impl Tun {
     };
 
     let dest_addr = (ip.destination, tcp.destination_port).into();
-    self.dst_map.put(tcp.source_port, dest_addr).await;
+    self.tcp_nat.put(tcp.source_port, dest_addr).await;
 
     ip.source = self.dummy_ip.octets();
     ip.destination = self.ip.octets();
@@ -147,8 +108,8 @@ impl Tun {
 
   async fn rewrite_incoming_tcp_packet(
     &self,
-    mut packet: Packet,
-  ) -> Result<Packet> {
+    mut packet: IpPacket,
+  ) -> Result<IpPacket> {
     let mut ip = match packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -159,7 +120,7 @@ impl Tun {
     };
     use std::net::IpAddr::V4;
     let dest_addr = self
-      .dst_map
+      .tcp_nat
       .get(tcp.destination_port)
       .await
       .ok_or(AddressNotFoundInDstMap)?;
@@ -181,7 +142,7 @@ impl Tun {
     Ok(packet)
   }
 
-  async fn rewrite_udp_packet(&mut self, packet: Packet) -> Result<Packet> {
+  async fn rewrite_udp_packet(&mut self, packet: IpPacket) -> Result<IpPacket> {
     let ip = match &packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -200,8 +161,8 @@ impl Tun {
 
   async fn rewrite_outgoing_udp_packet(
     &self,
-    mut packet: Packet,
-  ) -> Result<Packet> {
+    mut packet: IpPacket,
+  ) -> Result<IpPacket> {
     let mut ip = match packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -212,7 +173,7 @@ impl Tun {
     };
 
     let dest_addr = (ip.destination, udp.destination_port).into();
-    self.dst_map.put(udp.source_port, dest_addr).await;
+    self.udp_nat.put(udp.source_port, dest_addr).await;
 
     ip.source = self.dummy_ip.octets();
     ip.destination = self.ip.octets();
@@ -228,8 +189,8 @@ impl Tun {
 
   async fn rewrite_incoming_udp_packet(
     &self,
-    mut packet: Packet,
-  ) -> Result<Packet> {
+    mut packet: IpPacket,
+  ) -> Result<IpPacket> {
     let mut ip = match packet.ip {
       Version4(hdr) => hdr,
       _ => bail!("unreachable"),
@@ -240,7 +201,7 @@ impl Tun {
     };
     use std::net::IpAddr::V4;
     let dest_addr = self
-      .dst_map
+      .udp_nat
       .get(udp.destination_port)
       .await
       .ok_or(AddressNotFoundInDstMap)?;
@@ -261,33 +222,100 @@ impl Tun {
     packet.transport = Udp(udp);
     Ok(packet)
   }
+}
 
-  async fn send_packet<S>(
-    &mut self,
-    packet: &Packet,
-    sink: &mut S,
-  ) -> Result<()>
-  where
-    S: Sink<rust_tun::TunPacket> + std::marker::Unpin,
-  {
-    use crate::futures::SinkExt;
-    use std::io::Write;
+pub struct Tun {
+  udp_packet_source: UdpPacketSource,
+}
 
-    let mut buf = Vec::with_capacity(self.mtu as usize);
-    packet.ip.write(&mut buf)?;
-    packet.transport.write(&mut buf)?;
-    Write::write(&mut buf, &packet.payload)?;
+impl Tun {
+  pub async fn setup(
+    config: &Config,
+    tcp_nat: &DstMap,
+    udp_nat: &DstMap,
+    udp_packet_source: UdpPacketSource,
+  ) -> Result<Self> {
+    let Config { tun_config, .. } = config;
+    let mut conf = rust_tun::Configuration::default();
+    conf
+      .address(tun_config.ip)
+      .netmask(tun_config.netmask)
+      .mtu(tun_config.mtu as i32)
+      .up();
 
-    match sink.send(TunPacket::new(buf)).await {
-      Err(_) => bail!("failed to send packet"),
-      Ok(_) => Ok(()),
+    #[cfg(target_os = "linux")]
+    config.platform(|config| {
+      config.packet_information(true);
+    });
+
+    let dev = Some(create_as_async(&conf).map_err(TunError::from)?);
+    let TunConfig {
+      mtu, ip, dummy_ip, ..
+    } = *tun_config;
+    let tproxy_port = config.tproxy_config.bind_port;
+    let udp_proxy_port = config.udp_proxy_config.bind_port;
+    let tcp_nat = tcp_nat.clone();
+    let udp_nat = udp_nat.clone();
+
+    Ok(Tun {
+      dev,
+      ip,
+      mtu,
+      tcp_nat,
+      udp_nat,
+      dummy_ip,
+      tproxy_port,
+      udp_proxy_port,
+      udp_packet_source,
+    })
+  }
+
+  pub async fn start(mut self) -> Result<!> {
+    let (mut sink, mut stream) = self.dev.take().unwrap().into_framed().split();
+
+    while let Some(frame) = stream.next().await {
+      match IpPacket::parse(frame?.get_bytes())? {
+        Some(packet) => self.rewriter.rewrite(packet),
+        None => continue,
+      }
     }
+
+    panic!("tun device unavailable")
   }
 }
 
 #[derive(Clone, Debug)]
-pub struct Packet {
+pub struct IpPacket {
   ip: IpHeader,
   transport: TransportHeader,
   payload: Bytes,
+}
+
+impl IpPacket {
+  // return None if packet is valid but is not tcp nor udp
+  pub fn parse(bytes: &[u8]) -> Result<Option<Self>> {
+    let hdr = PacketHeaders::from_ip_slice(bytes)?;
+    match (hdr.ip, hdr.transport) {
+      (Some(ip @ Version4(_)), Some(transport)) => {
+        let payload = Bytes::copy_from_slice(hdr.payload);
+        Ok(Some(Self {
+          ip,
+          transport,
+          payload,
+        }))
+      }
+      _ => Ok(None),
+    }
+  }
+}
+
+impl Into<TunPacket> for IpPacket {
+  fn into(self) -> TunPacket {
+    use std::io::Write;
+    let mut buf = Vec::new();
+    self.ip.write(&mut buf)?;
+    self.transport.write(&mut buf)?;
+    Write::write(&mut buf, &self.payload)?;
+    TunPacket::new(buf)
+  }
 }

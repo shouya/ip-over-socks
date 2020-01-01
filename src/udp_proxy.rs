@@ -1,28 +1,32 @@
-use bytes::{Buf, Bytes, BytesMut};
-use futures::Future;
+use bytes::{Buf, BytesMut};
 use std::net::IpAddr;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::net::udp::{RecvHalf, SendHalf};
+use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::Mutex;
+use tokio::time::timeout;
 
 use crate::config::Config;
 use crate::dst_map::DstMap;
 use crate::error::Result;
 use crate::socks::{SocksServer, UdpSession};
+use crate::udp_packet::{UdpPacket, UdpPacketSink};
 
-pub struct Datagram {
-  // the actual destination
-  pub dest: SocketAddr,
-  pub src: SocketAddr,
-  pub payload: Bytes,
+struct UdpPeer {
+  session: UdpSession,
+  socket: UdpSocket,
 }
 
-#[derive(Debug)]
-struct Socks5BrokerSender(SendHalf);
+impl UdpPeer {
+  async fn setup(endpoint: &SocksServer) -> Result<Self> {
+    let bind_addr: SocketAddr = ([0, 0, 0, 0], 0u16).into();
+    let socket = UdpSocket::bind(bind_addr).await?;
+    let session = endpoint.udp_associate(bind_addr).await?;
 
-impl Socks5BrokerSender {
+    socket.connect(session.bind_addr.clone());
+
+    Ok(Self { session, socket })
+  }
+
   async fn send_to(
     &mut self,
     bytes: &[u8],
@@ -31,68 +35,18 @@ impl Socks5BrokerSender {
     let mut buf = SocksServer::udp_assoc_header(addr.into());
     let hdr_len = buf.len();
     buf.extend_from_slice(bytes);
-    let sent_len = self.0.send(&buf).await?;
+    let sent_len = self.socket.send(&buf).await?;
     Ok(sent_len - hdr_len)
-  }
-}
-
-pub struct Socks5Broker {
-  socket: UdpSocket,
-  session: Option<UdpSession>,
-  socks_server: SocksServer,
-}
-
-impl Socks5Broker {
-  async fn setup(conf: &Config) -> Result<Self> {
-    let bind_ip: IpAddr = [0u8; 4].into(); // conf.tun_config.ip;
-    let bind_port = conf.udp_proxy_config.broker_bind_port;
-    let socket = UdpSocket::bind((bind_ip, bind_port)).await?;
-
-    Ok(Self {
-      socket,
-      session: None,
-      socks_server: SocksServer::new(conf.socks_server_addr),
-    })
-  }
-
-  async fn associate(&mut self) -> Result<()> {
-    let dst_addr = ([0, 0, 0, 0], 10002).into();
-    let session = self.socks_server.udp_associate(dst_addr).await?;
-
-    self.socket.connect(session.bind_addr).await?;
-    self.session = Some(session);
-
-    Ok(())
-  }
-
-  async fn serve_listener(mut socket: RecvHalf) -> Result<()> {
-    loop {
-      let mut recv_buf = BytesMut::from(vec![0u8; 8196].as_slice());
-      let (len, addr) = Self::recv_from(&mut socket, &mut recv_buf).await?;
-      recv_buf.truncate(dbg!(len));
-      // TODO: problem to solve: how to find out the original src address
-      //
-      // possible solution: bind to a different port to send each udp packet
-      dbg!(recv_buf);
-      dbg!(addr); // destination address
-    }
-  }
-
-  fn serve(self) -> (impl Future<Output = Result<()>>, Socks5BrokerSender) {
-    let (recv, send) = self.socket.split();
-    let recv_fut = Self::serve_listener(recv);
-
-    (recv_fut, Socks5BrokerSender(send))
   }
 
   async fn recv_from(
-    socket: &mut RecvHalf,
+    &mut self,
     buffer: &mut [u8],
   ) -> Result<(usize, SocketAddr)> {
     // According to RFC 1928 Page 9, the header is at most 262 bytes longer than
     // the packet
     let mut recv_buf = BytesMut::from(vec![0u8; buffer.len() + 262].as_slice());
-    let recv_len = socket.recv(recv_buf.as_mut()).await?;
+    let recv_len = self.socket.recv(recv_buf.as_mut()).await?;
     recv_buf.truncate(recv_len);
 
     let (hdr_len, addr) = SocksServer::parse_udp_assoc_header(&recv_buf)
@@ -104,50 +58,81 @@ impl Socks5Broker {
     let buf_len = recv_len - hdr_len;
     Ok((buf_len, addr))
   }
+
+  async fn run(
+    mut self,
+    src: SocketAddr,
+    mut packet_sink: UdpPacketSink,
+  ) -> Result<!> {
+    loop {
+      let mut recv_buf = BytesMut::from(vec![0u8; 8196].as_slice());
+      let (len, dest) = self.recv_from(&mut recv_buf).await?;
+      recv_buf.truncate(len);
+
+      packet_sink
+        .send(UdpPacket {
+          src: dest,
+          dest: src,
+          payload: recv_buf.freeze(),
+        })
+        .await?;
+    }
+  }
 }
 
 pub struct UdpProxy {
+  socks_server: SocksServer,
+  src_ip: IpAddr,
   listener: UdpSocket,
-  broker: Socks5Broker,
   dst_map: DstMap,
+  packet_sink: UdpPacketSink,
 }
 
 impl UdpProxy {
-  pub async fn setup(conf: &Config, dst_map: &DstMap) -> Result<Self> {
+  pub async fn setup(
+    conf: &Config,
+    dst_map: &DstMap,
+    packet_sink: UdpPacketSink,
+  ) -> Result<Self> {
     let dst_map = dst_map.clone();
 
     let udp_conf = &conf.udp_proxy_config;
     let bind_addr = (conf.tun_config.ip, udp_conf.bind_port);
     let listener = UdpSocket::bind(bind_addr).await?;
-
-    let mut broker = Socks5Broker::setup(conf).await?;
-    broker.associate().await?;
+    let socks_server = SocksServer::new(conf.socks_server_addr);
+    let src_ip = conf.tun_config.ip.into();
 
     Ok(Self {
       listener,
       dst_map,
-      broker,
+      socks_server,
+      src_ip,
+      packet_sink,
     })
   }
 
-  pub async fn start(self) -> Result<()> {
+  pub async fn start(self) -> Result<!> {
     let (mut recv_half, send_half) = self.listener.split();
-    let send_half = Arc::new(Mutex::new(send_half));
-
-    let (fut, mut broker) = self.broker.serve();
-    tokio::spawn(fut);
 
     loop {
       let mut recv_buf = BytesMut::from(vec![0u8; 8196].as_slice());
-      let (len, src) = dbg!(recv_half.recv_from(&mut recv_buf).await?);
+      let (len, mut src) = recv_half.recv_from(&mut recv_buf).await?;
       recv_buf.truncate(len);
+
       match self.dst_map.get(src.port()).await {
         None => {
           continue;
         }
         Some(dest) => {
-          let payload = recv_buf.clone().freeze();
-          broker.send_to(&payload, dest).await?;
+          let mut peer = UdpPeer::setup(&self.socks_server).await?;
+          peer.send_to(&recv_buf, dest).await?;
+
+          src.set_ip(self.src_ip);
+          let sink = self.packet_sink.clone();
+          let fut = peer.run(src, sink);
+
+          let expires = Duration::from_secs(30);
+          tokio::spawn(timeout(expires, fut));
         }
       }
     }

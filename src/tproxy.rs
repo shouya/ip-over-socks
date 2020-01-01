@@ -34,7 +34,7 @@ impl Tproxy {
     })
   }
 
-  pub async fn start(mut self) -> Result<()> {
+  pub async fn start(mut self) -> Result<!> {
     loop {
       let (socket, peer_addr) = self.listener.accept().await?;
       match self.dst_map.get(peer_addr.port()).await {
