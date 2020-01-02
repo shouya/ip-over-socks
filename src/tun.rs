@@ -1,43 +1,55 @@
-use crate::config::{Config, TunConfig};
+use bytes::Bytes;
+use failure::Error;
+use futures::stream::StreamExt;
+use futures::{Sink, Stream};
+use std::net::Ipv4Addr;
+use std::pin::Pin;
+use tokio::sync::mpsc;
+
+use crate::config::Config;
 use crate::dst_map::DstMap;
 use crate::error::{AddressNotFoundInDstMap, Result, TunError};
-use crate::udp_packet::UdpPacketSource;
-
-use bytes::Bytes;
-use futures::stream::StreamExt;
-use futures::{Sink, Source};
-use std::net::Ipv4Addr;
+use crate::udp_packet::{UdpPacket, UdpPacketSource};
 
 use etherparse::{
   IpHeader,
   IpHeader::Version4,
-  PacketHeaders, TransportHeader,
+  PacketBuilder, PacketHeaders, TransportHeader,
   TransportHeader::{Tcp, Udp},
 };
-use rust_tun::{create_as_async, DeviceAsync, TunPacket};
+use rust_tun::{create_as_async, TunPacket};
 
-struct TunSource {
-  pub source: Box<dyn Source<TunSource> + Unpin>,
+struct TunStream {
+  stream: Pin<Box<dyn Stream<Item = TunPacket> + Send>>,
+  packet_sink: mpsc::Sender<IpPacket>,
+}
+
+impl TunStream {
+  pub async fn start(mut self) -> Result<!> {
+    while let Some(frame) = self.stream.next().await {
+      match IpPacket::parse(frame.get_bytes())? {
+        Some(packet) => self.packet_sink.send(packet).await?,
+        None => continue,
+      }
+    }
+    panic!("tun stream terminates")
+  }
 }
 
 struct TunSink {
-  sink: Box<dyn Sink<TunPacket> + Unpin>,
-  dev: Option<DeviceAsync>,
-  mtu: u16,
+  sink: Box<dyn Sink<TunPacket, Error = Error> + Unpin + Send>,
+  packet_source: mpsc::Receiver<IpPacket>,
 }
 
 impl TunSink {
-  pub async fn start<S>(mut self, packet_source: S) -> Result<!>
-  where
-    S: Source<rust_tun::TunPacket> + std::marker::Unpin,
-  {
+  pub async fn start(mut self) -> Result<!> {
     use crate::futures::SinkExt;
 
-    while let Some(packet) = packet_source.next() {
+    while let Some(packet) = self.packet_source.next().await {
       match self.sink.send(packet.into()).await {
         Err(_) => bail!("failed to send packet"),
-        Ok(_) => Ok(()),
-      };
+        Ok(_) => continue,
+      }
     }
     panic!("packet source interrupted")
   }
@@ -53,6 +65,16 @@ struct PacketRewriter {
 }
 
 impl PacketRewriter {
+  pub fn setup(conf: &Config, tcp_nat: &DstMap, udp_nat: &DstMap) -> Self {
+    Self {
+      ip: conf.tun_config.ip,
+      dummy_ip: conf.tun_config.dummy_ip,
+      tproxy_port: conf.tproxy_config.bind_port,
+      udp_proxy_port: conf.udp_proxy_config.bind_port,
+      tcp_nat: tcp_nat.clone(),
+      udp_nat: udp_nat.clone(),
+    }
+  }
   pub async fn rewrite(
     &mut self,
     packet: IpPacket,
@@ -224,17 +246,12 @@ impl PacketRewriter {
   }
 }
 
-pub struct Tun {
-  udp_packet_source: UdpPacketSource,
+pub struct TunDev {
+  dev: rust_tun::DeviceAsync,
 }
 
-impl Tun {
-  pub async fn setup(
-    config: &Config,
-    tcp_nat: &DstMap,
-    udp_nat: &DstMap,
-    udp_packet_source: UdpPacketSource,
-  ) -> Result<Self> {
+impl TunDev {
+  pub async fn setup(config: &Config) -> Result<Self> {
     let Config { tun_config, .. } = config;
     let mut conf = rust_tun::Configuration::default();
     conf
@@ -248,39 +265,91 @@ impl Tun {
       config.packet_information(true);
     });
 
-    let dev = Some(create_as_async(&conf).map_err(TunError::from)?);
-    let TunConfig {
-      mtu, ip, dummy_ip, ..
-    } = *tun_config;
-    let tproxy_port = config.tproxy_config.bind_port;
-    let udp_proxy_port = config.udp_proxy_config.bind_port;
-    let tcp_nat = tcp_nat.clone();
-    let udp_nat = udp_nat.clone();
+    let dev = create_as_async(&conf).map_err(TunError::from)?;
+    Ok(Self { dev })
+  }
 
-    Ok(Tun {
+  fn split(
+    self,
+  ) -> (
+    TunSink,
+    TunStream,
+    mpsc::Sender<IpPacket>,
+    mpsc::Receiver<IpPacket>,
+  ) {
+    use crate::futures::SinkExt;
+    let (ret_packet_sink, packet_source) = mpsc::channel(1);
+    let (packet_sink, ret_packet_source) = mpsc::channel(1);
+    let (sink, stream) = self.dev.into_framed().split();
+
+    let sink = TunSink {
+      sink: Box::new(sink.sink_err_into()),
+      packet_source: packet_source,
+    };
+    let stream = TunStream {
+      stream: stream.filter_map(async move |x| x.ok()).boxed(),
+      packet_sink: packet_sink,
+    };
+
+    (sink, stream, ret_packet_sink, ret_packet_source)
+  }
+}
+
+pub struct Tun {
+  dev: TunDev,
+  rewriter: PacketRewriter,
+  udp_packet_source: UdpPacketSource,
+}
+
+impl Tun {
+  pub async fn setup(
+    config: &Config,
+    tcp_nat: &DstMap,
+    udp_nat: &DstMap,
+    udp_packet_source: UdpPacketSource,
+  ) -> Result<Self> {
+    let dev = TunDev::setup(config).await?;
+    let rewriter = PacketRewriter::setup(config, tcp_nat, udp_nat);
+
+    Ok(Self {
       dev,
-      ip,
-      mtu,
-      tcp_nat,
-      udp_nat,
-      dummy_ip,
-      tproxy_port,
-      udp_proxy_port,
+      rewriter,
       udp_packet_source,
     })
   }
 
   pub async fn start(mut self) -> Result<!> {
-    let (mut sink, mut stream) = self.dev.take().unwrap().into_framed().split();
+    let (sender_service, receiver_service, mut packet_sink, mut packet_source) =
+      self.dev.split();
 
-    while let Some(frame) = stream.next().await {
-      match IpPacket::parse(frame?.get_bytes())? {
-        Some(packet) => self.rewriter.rewrite(packet),
+    let sender_fut = sender_service.start();
+    let receiver_fut = receiver_service.start();
+    let udp_handler_fut =
+      Self::handle_udp_packet(self.udp_packet_source, packet_sink.clone());
+
+    tokio::spawn(async move {
+      let (a, b, c) = futures::join!(sender_fut, receiver_fut, udp_handler_fut);
+      (a.ok(), b.ok(), c.ok())
+    });
+
+    while let Some(packet) = packet_source.next().await {
+      match self.rewriter.rewrite(packet).await? {
+        Some(packet) => packet_sink.send(packet).await?,
         None => continue,
       }
     }
 
     panic!("tun device unavailable")
+  }
+
+  async fn handle_udp_packet(
+    mut udp_source: UdpPacketSource,
+    mut packet_sink: mpsc::Sender<IpPacket>,
+  ) -> Result<!> {
+    while let Some(udp_packet) = udp_source.next().await {
+      packet_sink.send(udp_packet.into()).await?
+    }
+    panic!("udp packet translator failed")
   }
 }
 
@@ -313,9 +382,30 @@ impl Into<TunPacket> for IpPacket {
   fn into(self) -> TunPacket {
     use std::io::Write;
     let mut buf = Vec::new();
-    self.ip.write(&mut buf)?;
-    self.transport.write(&mut buf)?;
-    Write::write(&mut buf, &self.payload)?;
+    self.ip.write(&mut buf).ok();
+    self.transport.write(&mut buf).ok();
+    Write::write(&mut buf, &self.payload).ok();
     TunPacket::new(buf)
+  }
+}
+
+impl Into<IpPacket> for UdpPacket {
+  fn into(self) -> IpPacket {
+    use std::net::SocketAddr::{V4, V6};
+
+    let builder = match (&self.src, &self.dest) {
+      (&V4(src), &V4(dest)) => {
+        PacketBuilder::ipv4(src.ip().octets(), dest.ip().octets(), 5)
+      }
+      (&V6(src), &V6(dest)) => {
+        PacketBuilder::ipv6(src.ip().octets(), dest.ip().octets(), 5)
+      }
+      _ => panic!("UDP packet has different src and dest IP types"),
+    };
+    let builder = builder.udp(self.src.port(), self.dest.port());
+
+    let mut buf = vec![0; 1024];
+    builder.write(&mut buf, &self.payload).ok();
+    IpPacket::parse(&buf).unwrap().unwrap()
   }
 }

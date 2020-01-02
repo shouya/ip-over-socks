@@ -1,4 +1,5 @@
 #![feature(never_type)]
+#![feature(async_closure)]
 
 extern crate tun as rust_tun;
 #[macro_use]

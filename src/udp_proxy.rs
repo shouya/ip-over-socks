@@ -22,7 +22,7 @@ impl UdpPeer {
     let socket = UdpSocket::bind(bind_addr).await?;
     let session = endpoint.udp_associate(bind_addr).await?;
 
-    socket.connect(session.bind_addr.clone());
+    socket.connect(session.bind_addr.clone()).await?;
 
     Ok(Self { session, socket })
   }
@@ -65,6 +65,9 @@ impl UdpPeer {
     mut packet_sink: UdpPacketSink,
   ) -> Result<!> {
     loop {
+      // to ensure the session's living
+      let _ = self.session;
+
       let mut recv_buf = BytesMut::from(vec![0u8; 8196].as_slice());
       let (len, dest) = self.recv_from(&mut recv_buf).await?;
       recv_buf.truncate(len);
@@ -112,7 +115,7 @@ impl UdpProxy {
   }
 
   pub async fn start(self) -> Result<!> {
-    let (mut recv_half, send_half) = self.listener.split();
+    let (mut recv_half, _send_half) = self.listener.split();
 
     loop {
       let mut recv_buf = BytesMut::from(vec![0u8; 8196].as_slice());
