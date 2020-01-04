@@ -170,8 +170,6 @@ impl PacketRewriter {
       _ => bail!("unreachable"),
     };
 
-    dbg!(ip.source, self.dummy_ip);
-
     if ip.destination == self.dummy_ip.octets() {
       Ok(self.rewrite_incoming_udp_packet(packet).await?)
     } else if ip.source == self.ip.octets() {
@@ -393,19 +391,49 @@ impl Into<IpPacket> for UdpPacket {
   fn into(self) -> IpPacket {
     use std::net::SocketAddr::{V4, V6};
 
-    let builder = match (&self.src, &self.dest) {
-      (&V4(src), &V4(dest)) => {
-        PacketBuilder::ipv4(src.ip().octets(), dest.ip().octets(), 5)
+    let builder = {
+      match (&self.src, &self.dest) {
+        (&V4(src), &V4(dest)) => {
+          PacketBuilder::ipv4(src.ip().octets(), dest.ip().octets(), 5)
+            .udp(self.src.port(), self.dest.port())
+        }
+        (&V6(src), &V6(dest)) => {
+          PacketBuilder::ipv6(src.ip().octets(), dest.ip().octets(), 5)
+            .udp(self.src.port(), self.dest.port())
+        }
+        _ => panic!("UDP packet has different src and dest IP types"),
       }
-      (&V6(src), &V6(dest)) => {
-        PacketBuilder::ipv6(src.ip().octets(), dest.ip().octets(), 5)
-      }
-      _ => panic!("UDP packet has different src and dest IP types"),
     };
-    let builder = builder.udp(self.src.port(), self.dest.port());
 
-    let mut buf = vec![0; 1024];
-    builder.write(&mut buf, &self.payload).ok();
-    IpPacket::parse(&buf).unwrap().unwrap()
+    let packet = {
+      let packet_size = builder.size(self.payload.len());
+      let mut buf = Vec::with_capacity(packet_size);
+      builder.write(&mut buf, &self.payload).unwrap();
+      buf
+    };
+
+    IpPacket::parse(&packet).unwrap().unwrap()
+  }
+}
+
+#[cfg(test)]
+mod test {
+  use super::*;
+  #[test]
+  fn test_udp_packet() -> Result<()> {
+    let udp_packet = UdpPacket {
+      src: ([1, 2, 3, 4], 56).into(),
+      dest: ([4, 3, 2, 1], 65).into(),
+      payload: Bytes::from("hello"),
+    };
+
+    let ip_packet: IpPacket = udp_packet.into();
+    if let IpHeader::Version4(hdr) = ip_packet.ip {
+      assert_eq!(hdr.source, [1, 2, 3, 4])
+    } else {
+      bail!("invalid ip packet")
+    };
+
+    Ok(())
   }
 }

@@ -49,9 +49,9 @@ async fn main() -> Result<()> {
   let udp_proxy = UdpProxy::setup(&config, &udp_nat, sink).await?;
 
   // start processing packets from tun
-  let tun_fut = tokio::spawn(async move { tun.start().await });
-  let tproxy_fut = tokio::spawn(async move { tproxy.start().await });
-  let udp_fut = tokio::spawn(async move { udp_proxy.start().await });
+  let tun_fut = tokio::spawn(tun.start());
+  let tproxy_fut = tokio::spawn(tproxy.start());
+  let udp_fut = tokio::spawn(udp_proxy.start());
 
   let futs = future::join_all(vec![tun_fut, tproxy_fut, udp_fut]).await;
   futs.into_iter().for_each(|x| {
