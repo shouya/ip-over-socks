@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::config::Config;
 use crate::dst_map::DstMap;
 use crate::error::{AddressNotFoundInDstMap, Result, TunError};
-use crate::udp_packet::{UdpPacket, UdpPacketSource};
+use crate::udp;
 
 use etherparse::{
   IpHeader,
@@ -296,7 +296,7 @@ impl TunDev {
 pub struct Tun {
   dev: TunDev,
   rewriter: PacketRewriter,
-  udp_packet_source: UdpPacketSource,
+  udp_packet_source: udp::PacketSource,
 }
 
 impl Tun {
@@ -304,7 +304,7 @@ impl Tun {
     config: &Config,
     tcp_nat: &DstMap,
     udp_nat: &DstMap,
-    udp_packet_source: UdpPacketSource,
+    udp_packet_source: udp::PacketSource,
   ) -> Result<Self> {
     let dev = TunDev::setup(config).await?;
     let rewriter = PacketRewriter::setup(config, tcp_nat, udp_nat);
@@ -341,7 +341,7 @@ impl Tun {
   }
 
   async fn handle_udp_packet(
-    mut udp_source: UdpPacketSource,
+    mut udp_source: udp::PacketSource,
     mut packet_sink: mpsc::Sender<IpPacket>,
   ) -> Result<!> {
     while let Some(udp_packet) = udp_source.next().await {
@@ -387,7 +387,7 @@ impl Into<TunPacket> for IpPacket {
   }
 }
 
-impl Into<IpPacket> for UdpPacket {
+impl Into<IpPacket> for udp::Packet {
   fn into(self) -> IpPacket {
     use std::net::SocketAddr::{V4, V6};
 
@@ -421,7 +421,7 @@ mod test {
   use super::*;
   #[test]
   fn test_udp_packet() -> Result<()> {
-    let udp_packet = UdpPacket {
+    let udp_packet = udp::Packet {
       src: ([1, 2, 3, 4], 56).into(),
       dest: ([4, 3, 2, 1], 65).into(),
       payload: Bytes::from("hello"),

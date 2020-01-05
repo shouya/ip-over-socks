@@ -7,7 +7,6 @@ extern crate failure;
 extern crate etherparse;
 extern crate futures;
 extern crate tokio;
-extern crate transient_hashmap;
 
 mod config;
 mod dst_map;
@@ -16,15 +15,13 @@ mod proto;
 mod socks;
 mod tproxy;
 mod tun;
-mod udp_packet;
-mod udp_proxy;
+mod udp;
 
 use crate::config::Config;
 use crate::dst_map::DstMap;
 use crate::error::Result;
 use crate::tproxy::Tproxy;
 use crate::tun::Tun;
-use crate::udp_proxy::UdpProxy;
 
 use futures::future;
 
@@ -33,7 +30,7 @@ async fn main() -> Result<()> {
   let config = initialize_config();
 
   // udp packet channel
-  let (sink, source) = udp_packet::channel();
+  let (sink, source) = udp::channel();
 
   // destination map
   let tcp_nat = DstMap::new();
@@ -46,7 +43,7 @@ async fn main() -> Result<()> {
   let tproxy = Tproxy::setup(&config, &tcp_nat).await?;
 
   // setup udp proxy
-  let udp_proxy = UdpProxy::setup(&config, &udp_nat, sink).await?;
+  let udp_proxy = udp::Proxy::setup(&config, &udp_nat, sink).await?;
 
   // start processing packets from tun
   let tun_fut = tokio::spawn(tun.start());
