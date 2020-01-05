@@ -14,20 +14,20 @@ pub struct Client {
   pub src: SocketAddr,
 }
 
-pub struct Tproxy {
+pub struct Proxy {
   listener: TcpListener,
   socks_server: SocksServer,
   nat_table: NatTable,
 }
 
-impl Tproxy {
+impl Proxy {
   pub async fn setup(conf: &Config, nat_table: &NatTable) -> Result<Self> {
-    let bind_addr = (conf.tun_config.ip, conf.tproxy_config.bind_port);
+    let bind_addr = (conf.tun_config.ip, conf.tcp_proxy_config.bind_port);
     let listener = TcpListener::bind(bind_addr).await?;
     let socks_server = SocksServer::new(conf.socks_server_addr);
     let nat_table = nat_table.clone();
 
-    Ok(Tproxy {
+    Ok(Proxy {
       socks_server,
       listener,
       nat_table,
@@ -60,12 +60,12 @@ impl Tproxy {
     use tokio::io::copy;
 
     let mut socks_client = socks_server.tcp_connect(client.dest).await?;
-    let mut tproxy_client = client.socket;
+    let mut tcp_proxy_client = client.socket;
 
     let (mut socks_rx, mut socks_tx) = socks_client.split();
-    let (mut tproxy_rx, mut tproxy_tx) = tproxy_client.split();
-    let down = copy(&mut socks_rx, &mut tproxy_tx);
-    let up = copy(&mut tproxy_rx, &mut socks_tx);
+    let (mut tcp_proxy_rx, mut tcp_proxy_tx) = tcp_proxy_client.split();
+    let down = copy(&mut socks_rx, &mut tcp_proxy_tx);
+    let up = copy(&mut tcp_proxy_rx, &mut socks_tx);
 
     select(up, down).await;
     Ok(())

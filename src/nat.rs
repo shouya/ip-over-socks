@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // map from src port to actual dest addr,
-// as the info was erased while the packet is been redirected to tproxy
+// as the info was erased while the packet is been redirected to tcp proxy
 #[derive(Clone)]
 pub struct NatTable(Arc<Mutex<HashMap<u16, SocketAddr>>>);
 

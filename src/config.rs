@@ -9,7 +9,7 @@ pub struct TunConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct TproxyConfig {
+pub struct TcpProxyConfig {
   pub bind_port: u16,
 }
 
@@ -26,7 +26,7 @@ pub struct Config {
   pub tun_config: TunConfig,
 
   // transparent proxy server config
-  pub tproxy_config: TproxyConfig,
+  pub tcp_proxy_config: TcpProxyConfig,
 
   // udp proxy server config
   pub udp_proxy_config: UdpProxyConfig,

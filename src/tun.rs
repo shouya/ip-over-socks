@@ -58,7 +58,7 @@ impl TunSink {
 struct PacketRewriter {
   ip: Ipv4Addr,
   dummy_ip: Ipv4Addr,
-  tproxy_port: u16,
+  tcp_proxy_port: u16,
   udp_proxy_port: u16,
   tcp_nat: NatTable,
   udp_nat: NatTable,
@@ -69,7 +69,7 @@ impl PacketRewriter {
     Self {
       ip: conf.tun_config.ip,
       dummy_ip: conf.tun_config.dummy_ip,
-      tproxy_port: conf.tproxy_config.bind_port,
+      tcp_proxy_port: conf.tcp_proxy_config.bind_port,
       udp_proxy_port: conf.udp_proxy_config.bind_port,
       tcp_nat: tcp_nat.clone(),
       udp_nat: udp_nat.clone(),
@@ -118,7 +118,7 @@ impl PacketRewriter {
 
     ip.source = self.dummy_ip.octets();
     ip.destination = self.ip.octets();
-    tcp.destination_port = self.tproxy_port;
+    tcp.destination_port = self.tcp_proxy_port;
 
     ip.header_checksum = ip.calc_header_checksum()?;
     tcp.checksum = tcp.calc_checksum_ipv4(&ip, &packet.payload)?;

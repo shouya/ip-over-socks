@@ -9,18 +9,17 @@ extern crate futures;
 extern crate tokio;
 
 mod config;
-mod nat;
 mod error;
+mod nat;
 mod proto;
 mod socks;
-mod tproxy;
+mod tcp;
 mod tun;
 mod udp;
 
 use crate::config::Config;
-use crate::nat::NatTable;
 use crate::error::Result;
-use crate::tproxy::Tproxy;
+use crate::nat::NatTable;
 use crate::tun::Tun;
 
 use futures::future;
@@ -39,18 +38,18 @@ async fn main() -> Result<()> {
   // setup tun
   let tun = Tun::setup(&config, &tcp_nat, &udp_nat, source).await?;
 
-  // setup transparent proxy
-  let tproxy = Tproxy::setup(&config, &tcp_nat).await?;
+  // setup tcp proxy
+  let tcp_proxy = tcp::Proxy::setup(&config, &tcp_nat).await?;
 
   // setup udp proxy
   let udp_proxy = udp::Proxy::setup(&config, &udp_nat, sink).await?;
 
   // start processing packets from tun
   let tun_fut = tokio::spawn(tun.start());
-  let tproxy_fut = tokio::spawn(tproxy.start());
+  let tcp_fut = tokio::spawn(tcp_proxy.start());
   let udp_fut = tokio::spawn(udp_proxy.start());
 
-  let futs = future::join_all(vec![tun_fut, tproxy_fut, udp_fut]).await;
+  let futs = future::join_all(vec![tun_fut, tcp_fut, udp_fut]).await;
   futs.into_iter().for_each(|x| {
     x.expect("failed to resolve future")
       .expect("error while running server")
@@ -59,14 +58,14 @@ async fn main() -> Result<()> {
 }
 
 fn initialize_config() -> Config {
-  use config::{TproxyConfig, TunConfig, UdpProxyConfig};
+  use config::{TcpProxyConfig, TunConfig, UdpProxyConfig};
   let tun_config = TunConfig {
     ip: [10, 0, 0, 1].into(),
     dummy_ip: [10, 0, 0, 2].into(),
     netmask: [255, 255, 0, 0].into(),
     mtu: 1500,
   };
-  let tproxy_config = TproxyConfig { bind_port: 10001 };
+  let tcp_proxy_config = TcpProxyConfig { bind_port: 10001 };
   let udp_proxy_config = UdpProxyConfig {
     broker_bind_port: 10002,
     bind_port: 10001,
@@ -75,7 +74,7 @@ fn initialize_config() -> Config {
   let socks_server_addr = ([127, 0, 0, 1], 6155).into();
   Config {
     tun_config,
-    tproxy_config,
+    tcp_proxy_config,
     udp_proxy_config,
     socks_server_addr,
   }
