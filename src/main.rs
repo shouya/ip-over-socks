@@ -1,6 +1,6 @@
 #![feature(never_type)]
 #![feature(async_closure)]
-#![recursion_limit="1024"]
+#![recursion_limit = "1024"]
 
 extern crate tun as rust_tun;
 #[macro_use]
@@ -23,7 +23,7 @@ use crate::error::Result;
 use crate::nat::NatTable;
 use crate::tun::Tun;
 
-use futures::{select, pin_mut, FutureExt};
+use futures::{pin_mut, select, FutureExt};
 
 #[tokio::main]
 async fn main() -> Result<!> {
@@ -36,30 +36,24 @@ async fn main() -> Result<!> {
   let tcp_nat = NatTable::new();
   let udp_nat = NatTable::new();
 
-  // setup tun
+  // setup tun, tcp proxy, udp proxy
   let tun = Tun::setup(&config, &tcp_nat, &udp_nat, source).await?;
-
-  // setup tcp proxy
   let tcp_proxy = tcp::Proxy::setup(&config, &tcp_nat).await?;
-
-  // setup udp proxy
   let udp_proxy = udp::Proxy::setup(&config, &udp_nat, sink).await?;
 
-  // start processing packets from tun
+  // start processing packets
   let tun_fut = tun.start().fuse();
   let tcp_fut = tcp_proxy.start().fuse();
   let udp_fut = udp_proxy.start().fuse();
-  pin_mut!(tun_fut);
-  pin_mut!(tcp_fut);
-  pin_mut!(udp_fut);
+  pin_mut!(tun_fut, tcp_fut, udp_fut);
 
-  loop {
-    select! {
-      _ = tun_fut => (),
-      _ = tcp_fut => (),
-      _ = udp_fut => ()
-    }
+  select! {
+    _ = tun_fut => (),
+    _ = tcp_fut => (),
+    _ = udp_fut => ()
   }
+
+  panic!("unreachable")
 }
 
 fn initialize_config() -> Config {
