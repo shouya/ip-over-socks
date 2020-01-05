@@ -13,7 +13,7 @@ pub type PacketSink = mpsc::Sender<Packet>;
 pub type PacketSource = mpsc::Receiver<Packet>;
 
 pub fn channel() -> (PacketSink, PacketSource) {
-  mpsc::channel(0)
+  mpsc::channel(1)
 }
 
 

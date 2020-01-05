@@ -1,11 +1,8 @@
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use futures::select;
 use futures::FutureExt;
 use std::net::SocketAddr;
-use tokio::net::{
-  udp::{RecvHalf, SendHalf},
-  UdpSocket,
-};
+use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
 use crate::error::*;
@@ -30,7 +27,7 @@ impl Peer {
     collector: PacketSink,
     socks: SocksServer,
   ) -> Result<Self> {
-    let (command_receiver, command_source) = mpsc::channel(0);
+    let (command_receiver, command_source) = mpsc::channel(1);
     Ok(Self {
       src,
       dest,
@@ -57,34 +54,34 @@ impl Peer {
 
   pub async fn run(mut self) -> Result<()> {
     use Signal::*;
-    let (session, socket) = self.socks_handshake().await?;
-    let (recv_half, send_half) = socket.split();
+    let (_session, mut socket) = self.socks_handshake().await?;
 
-    select! {
-      command = self.command_source.recv().fuse() =>
-        match command {
-          Some(Ping) => /* silently ignore */ (),
-          Some(SendPacket(packet)) =>
-            Self::send_packet(send_half, packet).await?,
-          None => return Ok(()),
-        },
-      mut packet = Self::recv_packet(recv_half).fuse() => {
-        let mut packet = packet?;
-        packet.dest = self.src;
-        self.collector.send(packet).await?
-      }
-    };
-    let _ = session;
+    loop {
+      select! {
+        command = self.command_source.recv().fuse() =>
+          match command {
+            Some(Ping) => /* silently ignore */ (),
+            Some(SendPacket(packet)) =>
+              Self::send_packet(&mut socket, packet).await?,
+            None => return Ok(()),
+          },
+
+        mut packet = Self::recv_packet(&mut socket).fuse() => {
+          let mut packet = dbg!(packet?);
+          packet.dest = self.src;
+          self.collector.send(packet).await?
+        }
+      };
+    }
+  }
+
+  async fn send_packet(socket: &mut UdpSocket, packet: Packet) -> Result<()> {
+    Self::send_to(socket, packet.payload, packet.dest).await?;
     Ok(())
   }
 
-  async fn send_packet(send_half: SendHalf, packet: Packet) -> Result<()> {
-    Self::send_to(send_half, packet.payload, packet.dest).await?;
-    Ok(())
-  }
-
-  async fn recv_packet(recv_half: RecvHalf) -> Result<Packet> {
-    let (bytes, addr) = Self::recv_from(recv_half).await?;
+  async fn recv_packet(socket: &mut UdpSocket) -> Result<Packet> {
+    let (bytes, addr) = Self::recv_from(socket).await?;
     Ok(Packet {
       src: addr,
       payload: bytes,
@@ -93,7 +90,7 @@ impl Peer {
   }
 
   async fn send_to(
-    mut socket: SendHalf,
+    socket: &mut UdpSocket,
     bytes: Bytes,
     addr: SocketAddr,
   ) -> Result<usize> {
@@ -104,15 +101,15 @@ impl Peer {
     Ok(sent_len - hdr_len)
   }
 
-  async fn recv_from(mut socket: RecvHalf) -> Result<(Bytes, SocketAddr)> {
+  async fn recv_from(socket: &mut UdpSocket) -> Result<(Bytes, SocketAddr)> {
     let mut recv_buf = BytesMut::from(vec![0u8; 65535].as_slice());
     let recv_len = socket.recv(recv_buf.as_mut()).await?;
     recv_buf.truncate(recv_len);
 
     let (hdr_len, addr) = SocksServer::parse_udp_assoc_header(&recv_buf)
       .ok_or(failure::err_msg("unable to parse socks5 udp_assoc_header"))?;
-    recv_buf.advance(hdr_len);
+    let payload = recv_buf.split_off(hdr_len);
 
-    Ok((recv_buf.freeze(), addr))
+    Ok((payload.freeze(), addr))
   }
 }
