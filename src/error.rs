@@ -12,7 +12,7 @@ pub struct UnsupportedPacket;
 
 #[derive(Debug, Fail)]
 #[fail(display = "address not found in dst map")]
-pub struct AddressNotFoundInDstMap;
+pub struct AddressNotFoundInNat;
 
 impl From<tun::Error> for TunError {
   fn from(e: tun::Error) -> TunError {

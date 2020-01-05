@@ -9,7 +9,7 @@ extern crate futures;
 extern crate tokio;
 
 mod config;
-mod dst_map;
+mod nat;
 mod error;
 mod proto;
 mod socks;
@@ -18,7 +18,7 @@ mod tun;
 mod udp;
 
 use crate::config::Config;
-use crate::dst_map::DstMap;
+use crate::nat::NatTable;
 use crate::error::Result;
 use crate::tproxy::Tproxy;
 use crate::tun::Tun;
@@ -32,9 +32,9 @@ async fn main() -> Result<()> {
   // udp packet channel
   let (sink, source) = udp::channel();
 
-  // destination map
-  let tcp_nat = DstMap::new();
-  let udp_nat = DstMap::new();
+  // nat tables
+  let tcp_nat = NatTable::new();
+  let udp_nat = NatTable::new();
 
   // setup tun
   let tun = Tun::setup(&config, &tcp_nat, &udp_nat, source).await?;

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::dst_map::DstMap;
+use crate::nat::NatTable;
 use crate::error::*;
 use crate::socks::SocksServer;
 use crate::udp::{
@@ -14,17 +14,17 @@ use tokio::net::UdpSocket;
 pub struct Proxy {
   src_ip: IpAddr,
   socket: UdpSocket,
-  dst_map: DstMap,
+  nat_table: NatTable,
   dispatcher: Dispatcher,
 }
 
 impl Proxy {
   pub async fn setup(
     conf: &Config,
-    dst_map: &DstMap,
+    nat_table: &NatTable,
     packet_sink: PacketSink,
   ) -> Result<Self> {
-    let dst_map = dst_map.clone();
+    let nat_table = nat_table.clone();
 
     let udp_conf = &conf.udp_proxy_config;
     let bind_addr = (conf.tun_config.ip, udp_conf.bind_port);
@@ -35,7 +35,7 @@ impl Proxy {
 
     Ok(Self {
       socket,
-      dst_map,
+      nat_table,
       dispatcher,
       src_ip,
     })
@@ -47,7 +47,7 @@ impl Proxy {
       let (len, src) = self.socket.recv_from(&mut recv_buf).await?;
       recv_buf.truncate(len);
 
-      match self.dst_map.get(src.port()).await {
+      match self.nat_table.get(src.port()).await {
         None => {
           continue;
         }

@@ -7,8 +7,8 @@ use std::pin::Pin;
 use tokio::sync::mpsc;
 
 use crate::config::Config;
-use crate::dst_map::DstMap;
-use crate::error::{AddressNotFoundInDstMap, Result, TunError};
+use crate::nat::NatTable;
+use crate::error::{AddressNotFoundInNat, Result, TunError};
 use crate::udp;
 
 use etherparse::{
@@ -60,12 +60,12 @@ struct PacketRewriter {
   dummy_ip: Ipv4Addr,
   tproxy_port: u16,
   udp_proxy_port: u16,
-  tcp_nat: DstMap,
-  udp_nat: DstMap,
+  tcp_nat: NatTable,
+  udp_nat: NatTable,
 }
 
 impl PacketRewriter {
-  pub fn setup(conf: &Config, tcp_nat: &DstMap, udp_nat: &DstMap) -> Self {
+  pub fn setup(conf: &Config, tcp_nat: &NatTable, udp_nat: &NatTable) -> Self {
     Self {
       ip: conf.tun_config.ip,
       dummy_ip: conf.tun_config.dummy_ip,
@@ -145,7 +145,7 @@ impl PacketRewriter {
       .tcp_nat
       .get(tcp.destination_port)
       .await
-      .ok_or(AddressNotFoundInDstMap)?;
+      .ok_or(AddressNotFoundInNat)?;
 
     let dest_ipv4 = match dest_addr.ip() {
       V4(v4) => v4,
@@ -224,7 +224,7 @@ impl PacketRewriter {
       .udp_nat
       .get(udp.destination_port)
       .await
-      .ok_or(AddressNotFoundInDstMap)?;
+      .ok_or(AddressNotFoundInNat)?;
 
     let dest_ipv4 = match dest_addr.ip() {
       V4(v4) => v4,
@@ -302,8 +302,8 @@ pub struct Tun {
 impl Tun {
   pub async fn setup(
     config: &Config,
-    tcp_nat: &DstMap,
-    udp_nat: &DstMap,
+    tcp_nat: &NatTable,
+    udp_nat: &NatTable,
     udp_packet_source: udp::PacketSource,
   ) -> Result<Self> {
     let dev = TunDev::setup(config).await?;

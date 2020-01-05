@@ -6,12 +6,12 @@ use tokio::sync::Mutex;
 // map from src port to actual dest addr,
 // as the info was erased while the packet is been redirected to tproxy
 #[derive(Clone)]
-pub struct DstMap(Arc<Mutex<HashMap<u16, SocketAddr>>>);
+pub struct NatTable(Arc<Mutex<HashMap<u16, SocketAddr>>>);
 
-impl DstMap {
+impl NatTable {
   pub fn new() -> Self {
     let map = Arc::new(Mutex::new(HashMap::new()));
-    DstMap(map)
+    NatTable(map)
   }
 
   pub async fn put(&self, src_port: u16, dst_addr: SocketAddr) -> () {

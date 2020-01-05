@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::config::Config;
-use crate::dst_map::DstMap;
+use crate::nat::NatTable;
 use crate::error::Result;
 use crate::socks::SocksServer;
 
@@ -17,27 +17,27 @@ pub struct Client {
 pub struct Tproxy {
   listener: TcpListener,
   socks_server: SocksServer,
-  dst_map: DstMap,
+  nat_table: NatTable,
 }
 
 impl Tproxy {
-  pub async fn setup(conf: &Config, dst_map: &DstMap) -> Result<Self> {
+  pub async fn setup(conf: &Config, nat_table: &NatTable) -> Result<Self> {
     let bind_addr = (conf.tun_config.ip, conf.tproxy_config.bind_port);
     let listener = TcpListener::bind(bind_addr).await?;
     let socks_server = SocksServer::new(conf.socks_server_addr);
-    let dst_map = dst_map.clone();
+    let nat_table = nat_table.clone();
 
     Ok(Tproxy {
       socks_server,
       listener,
-      dst_map,
+      nat_table,
     })
   }
 
   pub async fn start(mut self) -> Result<!> {
     loop {
       let (socket, peer_addr) = self.listener.accept().await?;
-      match self.dst_map.get(peer_addr.port()).await {
+      match self.nat_table.get(peer_addr.port()).await {
         None => continue,
         Some(dest) => {
           let src = peer_addr.clone();
