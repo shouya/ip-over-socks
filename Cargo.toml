@@ -1,5 +1,5 @@
 [package]
-name = "tun2socks"
+name = "ip-over-socks"
 version = "0.1.0"
 authors = ["Shou Ya <shouya@users.noreply.github.com>"]
 edition = "2018"
