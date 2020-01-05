@@ -7,6 +7,7 @@ extern crate failure;
 extern crate etherparse;
 extern crate futures;
 extern crate tokio;
+extern crate tokio_util;
 
 mod config;
 mod error;

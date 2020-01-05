@@ -67,7 +67,7 @@ impl Peer {
           },
 
         mut packet = Self::recv_packet(&mut socket).fuse() => {
-          let mut packet = dbg!(packet?);
+          let mut packet = packet?;
           packet.dest = self.src;
           self.collector.send(packet).await?
         }
