@@ -11,7 +11,6 @@ extern crate tokio;
 mod config;
 mod error;
 mod nat;
-mod proto;
 mod socks;
 mod tcp;
 mod tun;

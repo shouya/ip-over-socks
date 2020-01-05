@@ -3,9 +3,9 @@ use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::config::Config;
-use crate::nat::NatTable;
 use crate::error::Result;
-use crate::socks::SocksServer;
+use crate::nat::NatTable;
+use crate::socks::Client as SocksClient;
 
 pub struct Client {
   pub socket: TcpStream,
@@ -16,7 +16,7 @@ pub struct Client {
 
 pub struct Proxy {
   listener: TcpListener,
-  socks_server: SocksServer,
+  socks_client: SocksClient,
   nat_table: NatTable,
 }
 
@@ -24,11 +24,11 @@ impl Proxy {
   pub async fn setup(conf: &Config, nat_table: &NatTable) -> Result<Self> {
     let bind_addr = (conf.tun_config.ip, conf.tcp_proxy_config.bind_port);
     let listener = TcpListener::bind(bind_addr).await?;
-    let socks_server = SocksServer::new(conf.socks_server_addr);
+    let socks_client = SocksClient::new(conf.socks_server_addr);
     let nat_table = nat_table.clone();
 
     Ok(Proxy {
-      socks_server,
+      socks_client,
       listener,
       nat_table,
     })
@@ -42,10 +42,10 @@ impl Proxy {
         Some(dest) => {
           let src = peer_addr.clone();
           let client = Client { dest, src, socket };
-          let socks_server = self.socks_server.clone();
+          let socks_client = self.socks_client.clone();
 
           tokio::spawn(async move {
-            Self::forward_to_socks_proxy(socks_server, client).await
+            Self::forward_to_socks_proxy(socks_client, client).await
           });
         }
       }
@@ -53,17 +53,17 @@ impl Proxy {
   }
 
   async fn forward_to_socks_proxy(
-    socks_server: SocksServer,
+    socks_client: SocksClient,
     client: Client,
   ) -> Result<()> {
     use futures::future::select;
     use tokio::io::copy;
 
-    let mut socks_client = socks_server.tcp_connect(client.dest).await?;
-    let mut tcp_proxy_client = client.socket;
+    let mut socks_client = socks_client.tcp_connect(client.dest).await?;
+    let mut proxy_client = client.socket;
 
     let (mut socks_rx, mut socks_tx) = socks_client.split();
-    let (mut tcp_proxy_rx, mut tcp_proxy_tx) = tcp_proxy_client.split();
+    let (mut tcp_proxy_rx, mut tcp_proxy_tx) = proxy_client.split();
     let down = copy(&mut socks_rx, &mut tcp_proxy_tx);
     let up = copy(&mut tcp_proxy_rx, &mut socks_tx);
 

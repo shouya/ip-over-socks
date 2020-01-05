@@ -1,7 +1,7 @@
 use crate::config::Config;
-use crate::nat::NatTable;
 use crate::error::*;
-use crate::socks::SocksServer;
+use crate::nat::NatTable;
+use crate::socks::Client as SocksClient;
 use crate::udp::{
   dispatcher::Dispatcher,
   packet::{Packet, PacketSink},
@@ -29,9 +29,9 @@ impl Proxy {
     let udp_conf = &conf.udp_proxy_config;
     let bind_addr = (conf.tun_config.ip, udp_conf.bind_port);
     let socket = UdpSocket::bind(bind_addr).await?;
-    let socks_server = SocksServer::new(conf.socks_server_addr);
+    let socks_client = SocksClient::new(conf.socks_server_addr);
     let src_ip = conf.tun_config.ip.into();
-    let dispatcher = Dispatcher::setup(packet_sink, socks_server);
+    let dispatcher = Dispatcher::setup(packet_sink, socks_client);
 
     Ok(Self {
       socket,

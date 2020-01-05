@@ -6,7 +6,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
 use crate::error::*;
-use crate::socks::{SocksServer, UdpSession};
+use crate::socks::{Client as SocksClient, UdpSession};
 use crate::udp::dispatcher::{PeerHandle, Signal};
 use crate::udp::packet::{Packet, PacketSink};
 
@@ -14,7 +14,7 @@ pub struct Peer {
   src: SocketAddr,
   #[allow(unused)]
   dest: SocketAddr,
-  socks: SocksServer,
+  socks: SocksClient,
   handle: PeerHandle,
   command_source: mpsc::Receiver<Signal>,
   collector: PacketSink,
@@ -25,7 +25,7 @@ impl Peer {
     src: SocketAddr,
     dest: SocketAddr,
     collector: PacketSink,
-    socks: SocksServer,
+    socks: SocksClient,
   ) -> Result<Self> {
     let (command_receiver, command_source) = mpsc::channel(1);
     Ok(Self {
@@ -94,7 +94,7 @@ impl Peer {
     bytes: Bytes,
     addr: SocketAddr,
   ) -> Result<usize> {
-    let mut buf = SocksServer::udp_assoc_header(addr.into());
+    let mut buf = SocksClient::udp_assoc_header(addr.into());
     let hdr_len = buf.len();
     buf.extend(bytes);
     let sent_len = socket.send(&buf).await?;
@@ -106,7 +106,7 @@ impl Peer {
     let recv_len = socket.recv(recv_buf.as_mut()).await?;
     recv_buf.truncate(recv_len);
 
-    let (hdr_len, addr) = SocksServer::parse_udp_assoc_header(&recv_buf)
+    let (hdr_len, addr) = SocksClient::parse_udp_assoc_header(&recv_buf)
       .ok_or(failure::err_msg("unable to parse socks5 udp_assoc_header"))?;
     let payload = recv_buf.split_off(hdr_len);
 

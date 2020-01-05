@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
-use crate::socks::SocksServer;
+use crate::socks::Client as SocksClient;
 use crate::udp::packet::{Packet, PacketSink};
 use crate::udp::peer::Peer;
 
@@ -56,16 +56,16 @@ impl PeerHandle {
 pub struct Dispatcher {
   table: HashMap<Key, PeerHandle>,
   collector: PacketSink,
-  socks_server: SocksServer,
+  socks_client: SocksClient,
 }
 
 impl Dispatcher {
-  pub fn setup(collector: PacketSink, socks_server: SocksServer) -> Self {
+  pub fn setup(collector: PacketSink, socks_client: SocksClient) -> Self {
     let table = HashMap::new();
     Self {
       table,
       collector,
-      socks_server,
+      socks_client,
     }
   }
 
@@ -87,7 +87,7 @@ impl Dispatcher {
       key.src,
       key.dest,
       self.collector.clone(),
-      self.socks_server.clone(),
+      self.socks_client.clone(),
     )
     .await
     .expect("failed to setup udp peer");

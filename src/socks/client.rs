@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
 use crate::error::Result;
-use crate::proto::socks5;
+use crate::socks::proto;
 
 #[derive(Clone, Debug)]
-pub struct SocksServer {
-  address: SocketAddr,
+pub struct Client {
+  server_addr: SocketAddr,
 }
 
 #[derive(Debug)]
@@ -16,14 +16,14 @@ pub struct UdpSession {
   pub bind_addr: SocketAddr,
 }
 
-impl SocksServer {
-  pub fn new(address: SocketAddr) -> Self {
-    Self { address }
+impl Client {
+  pub fn new(server_addr: SocketAddr) -> Self {
+    Self { server_addr }
   }
 
   async fn handshake(&self) -> Result<TcpStream> {
-    use socks5::*;
-    let mut client = TcpStream::connect(self.address).await?;
+    use proto::*;
+    let mut client = TcpStream::connect(self.server_addr).await?;
     let auth_methods = vec![SOCKS5_AUTH_METHOD_NONE];
     let handshake_req = HandshakeRequest::new(auth_methods);
     handshake_req.write_to(&mut client).await?;
@@ -38,17 +38,17 @@ impl SocksServer {
   }
 
   pub async fn tcp_connect(&self, address: SocketAddr) -> Result<TcpStream> {
-    use socks5::Reply::Succeeded;
+    use proto::Reply::Succeeded;
 
     let mut client = self.handshake().await?;
     let req = {
-      let command = socks5::Command::TcpConnect;
+      let command = proto::Command::TcpConnect;
       let address = address.into();
-      socks5::TcpRequestHeader { command, address }
+      proto::TcpRequestHeader { command, address }
     };
 
     req.write_to(&mut client).await?;
-    let resp = socks5::TcpResponseHeader::read_from(&mut client).await?;
+    let resp = proto::TcpResponseHeader::read_from(&mut client).await?;
     ensure!(
       resp.reply == Succeeded,
       "socks server responded with non-successful resp (tcp connect)"
@@ -58,19 +58,19 @@ impl SocksServer {
   }
 
   pub async fn udp_associate(&self, address: SocketAddr) -> Result<UdpSession> {
-    use socks5::Reply::Succeeded;
+    use proto::Reply::Succeeded;
     use std::net::ToSocketAddrs;
 
     let mut client = self.handshake().await?;
     let req = {
-      let command = socks5::Command::UdpAssociate;
+      let command = proto::Command::UdpAssociate;
       let address = address.into();
-      socks5::TcpRequestHeader { command, address }
+      proto::TcpRequestHeader { command, address }
     };
 
     req.write_to(&mut client).await?;
     // it crashes here, I may need to check on the response from socks server
-    let resp = match socks5::TcpResponseHeader::read_from(&mut client).await {
+    let resp = match proto::TcpResponseHeader::read_from(&mut client).await {
       Ok(resp) => resp,
       e => bail!("failed here: {:?}", e),
     };
@@ -88,7 +88,7 @@ impl SocksServer {
   }
 
   pub fn udp_assoc_header(address: SocketAddr) -> BytesMut {
-    let hdr = socks5::UdpAssociateHeader::new(0x0, address.into());
+    let hdr = proto::UdpAssociateHeader::new(0x0, address.into());
     let mut buf = BytesMut::new();
     hdr.write_to_buf(&mut buf);
     buf
@@ -98,7 +98,7 @@ impl SocksServer {
   pub fn parse_udp_assoc_header(bytes: &[u8]) -> Option<(usize, SocketAddr)> {
     use futures::executor::block_on;
     use std::net::ToSocketAddrs;
-    let hdr = block_on(socks5::UdpAssociateHeader::read_from(bytes)).ok()?;
+    let hdr = block_on(proto::UdpAssociateHeader::read_from(bytes)).ok()?;
     let addr = hdr.address.to_socket_addrs().ok()?.next()?;
     Some((hdr.serialized_len(), addr))
   }
