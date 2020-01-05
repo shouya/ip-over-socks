@@ -1,5 +1,6 @@
 #![feature(never_type)]
 #![feature(async_closure)]
+#![recursion_limit="1024"]
 
 extern crate tun as rust_tun;
 #[macro_use]
@@ -22,10 +23,10 @@ use crate::error::Result;
 use crate::nat::NatTable;
 use crate::tun::Tun;
 
-use futures::future;
+use futures::{select, pin_mut, FutureExt};
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<!> {
   let config = initialize_config();
 
   // udp packet channel
@@ -45,16 +46,20 @@ async fn main() -> Result<()> {
   let udp_proxy = udp::Proxy::setup(&config, &udp_nat, sink).await?;
 
   // start processing packets from tun
-  let tun_fut = tokio::spawn(tun.start());
-  let tcp_fut = tokio::spawn(tcp_proxy.start());
-  let udp_fut = tokio::spawn(udp_proxy.start());
+  let tun_fut = tun.start().fuse();
+  let tcp_fut = tcp_proxy.start().fuse();
+  let udp_fut = udp_proxy.start().fuse();
+  pin_mut!(tun_fut);
+  pin_mut!(tcp_fut);
+  pin_mut!(udp_fut);
 
-  let futs = future::join_all(vec![tun_fut, tcp_fut, udp_fut]).await;
-  futs.into_iter().for_each(|x| {
-    x.expect("failed to resolve future")
-      .expect("error while running server")
-  });
-  Ok(())
+  loop {
+    select! {
+      _ = tun_fut => (),
+      _ = tcp_fut => (),
+      _ = udp_fut => ()
+    }
+  }
 }
 
 fn initialize_config() -> Config {
