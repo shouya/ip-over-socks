@@ -10,8 +10,9 @@ The method is described by the author of fqrouter project in [this post (Chinese
 1. Clone and build the program
 2. Start the socks proxy server
 3. Run `ip-over-socks <SOCKS_PROXY_ADDR>:<SOCKS_PROXY_PORT>`
-4. Add route for the tun device: `ip route add 10.0.0.0/16 via 10.0.0.1`
-5. Route more traffic to the tun device, for example
+4. (Mandatory) Add route for the tun device:
+  `ip route add 10.0.0.0/16 via 10.0.0.1`
+5. Add more routes according to your need, for example:
   `ip route add 8.8.8.8 via 10.0.0.1`
 
 The address of the tun device can be specified using the `-n` option. See the section below for all available options.
