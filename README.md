@@ -44,7 +44,7 @@ Use `ip-over-socks --help` to check the help information.
 
                 The first available address will get assigned to the device, the second address will be taken as a dummy
                 address for internal use. Therefore, you need to assign it a network space to support at least 2 hosts. In
-                other words, the prefix needs to be smaller than /31. [default: 10.0.0.1/16]
+                other words, the prefix length needs to be shorter than /31. [default: 10.0.0.1/16]
         -t, --tcp-port <tcp-port>
                 Port for internal TCP proxy [default: 10001]
 

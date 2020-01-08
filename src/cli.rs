@@ -12,7 +12,7 @@ pub struct CliConfig {
   /// The first available address will get assigned to the device, the second
   /// address will be taken as a dummy address for internal use. Therefore, you
   /// need to assign it a network space to support at least 2 hosts. In other
-  /// words, the prefix needs to be smaller than /31.
+  /// words, the prefix length needs to be shorter than /31.
   #[structopt(short, long, default_value = "10.0.0.1/16")]
   net: Ipv4Net,
 
