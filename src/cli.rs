@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
-#[structopt(about = "Tunnel TCP/UDP (L3) packets via a Socks5 Proxy (L4)")]
+#[structopt(about = "Tunnel TCP and UDP traffic over SOCKS5 Proxy")]
 pub struct CliConfig {
   /// The address space for the device
   ///

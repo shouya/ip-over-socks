@@ -22,7 +22,7 @@ The address of the tun device can be specified using the `-n` option. See the se
 Use `ip-over-socks --help` to check the help information.
 
     ip-over-socks 0.1.0
-    Tunnel TCP/UDP (L3) packets via a Socks5 Proxy (L4)
+    Tunnel TCP and UDP traffic over SOCKS5 Proxy
 
     USAGE:
         ip-over-socks [OPTIONS] <socks-server>
