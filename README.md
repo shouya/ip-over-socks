@@ -1,4 +1,4 @@
-# IP over Socks
+# IP over SOCKS
 
 This project implements a method to tunnel IP traffic (spec. TCP & UDP) over a
 SOCKS5 proxy that supports both CONNECT and UDP ASSOCIATE methods.
