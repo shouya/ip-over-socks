@@ -8,10 +8,12 @@ edition = "2018"
 failure = "0.1"
 tokio = {version = "0.2", features=["tcp", "udp", "sync", "time"]}
 tokio-util = "0.2.0"
+futures = "0.3"
 bytes = "0.5"
 log = "0.4"
 etherparse = "0.9"
-futures = "0.3"
+ipnet = {version = "2.1", features = ["serde"]}
+structopt = "0.3.7"
 
 [dependencies.tun]
 git = "https://github.com/meh/rust-tun"

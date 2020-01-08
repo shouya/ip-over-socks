@@ -1,15 +1,12 @@
 #![feature(never_type)]
 #![feature(async_closure)]
-#![recursion_limit = "1024"]
+#![feature(type_ascription)]
 
 extern crate tun as rust_tun;
 #[macro_use]
 extern crate failure;
-extern crate etherparse;
-extern crate futures;
-extern crate tokio;
-extern crate tokio_util;
 
+mod cli;
 mod config;
 mod error;
 mod nat;
@@ -18,6 +15,8 @@ mod tcp;
 mod tun;
 mod udp;
 
+use structopt::StructOpt;
+
 use crate::config::Config;
 use crate::error::Result;
 use crate::nat::NatTable;
@@ -25,10 +24,7 @@ use crate::tun::Tun;
 
 use futures::{pin_mut, select, FutureExt};
 
-#[tokio::main]
-async fn main() -> Result<!> {
-  let config = initialize_config();
-
+async fn start(conf: Config) -> Result<!> {
   // udp packet channel
   let (sink, source) = udp::channel();
 
@@ -37,9 +33,9 @@ async fn main() -> Result<!> {
   let udp_nat = NatTable::new();
 
   // setup tun, tcp proxy, udp proxy
-  let tun = Tun::setup(&config, &tcp_nat, &udp_nat, source).await?;
-  let tcp_proxy = tcp::Proxy::setup(&config, &tcp_nat).await?;
-  let udp_proxy = udp::Proxy::setup(&config, &udp_nat, sink).await?;
+  let tun = Tun::setup(&conf, &tcp_nat, &udp_nat, source).await?;
+  let tcp_proxy = tcp::Proxy::setup(&conf, &tcp_nat).await?;
+  let udp_proxy = udp::Proxy::setup(&conf, &udp_nat, sink).await?;
 
   // start processing packets
   let tun_fut = tun.start().fuse();
@@ -56,25 +52,8 @@ async fn main() -> Result<!> {
   panic!("unreachable")
 }
 
-fn initialize_config() -> Config {
-  use config::{TcpProxyConfig, TunConfig, UdpProxyConfig};
-  let tun_config = TunConfig {
-    ip: [10, 0, 0, 1].into(),
-    dummy_ip: [10, 0, 0, 2].into(),
-    netmask: [255, 255, 0, 0].into(),
-    mtu: 1500,
-  };
-  let tcp_proxy_config = TcpProxyConfig { bind_port: 10001 };
-  let udp_proxy_config = UdpProxyConfig {
-    broker_bind_port: 10002,
-    bind_port: 10001,
-    recv_buf_size: 8196,
-  };
-  let socks_server_addr = ([127, 0, 0, 1], 6155).into();
-  Config {
-    tun_config,
-    tcp_proxy_config,
-    udp_proxy_config,
-    socks_server_addr,
-  }
+#[tokio::main]
+async fn main() -> Result<!> {
+  let cli_conf = cli::CliConfig::from_args();
+  start(cli_conf.into()).await
 }

@@ -15,9 +15,7 @@ pub struct TcpProxyConfig {
 
 #[derive(Debug, Clone)]
 pub struct UdpProxyConfig {
-  pub broker_bind_port: u16,
   pub bind_port: u16,
-  pub recv_buf_size: usize
 }
 
 #[derive(Debug, Clone)]

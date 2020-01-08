@@ -1,4 +1,4 @@
-use failure::{Error, SyncFailure};
+use failure::{Fail, Error, SyncFailure};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
