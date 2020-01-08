@@ -1,34 +1,16 @@
 use std::net::{Ipv4Addr, SocketAddr};
 
 #[derive(Debug, Clone)]
-pub struct TunConfig {
-  pub ip: Ipv4Addr,
-  pub dummy_ip: Ipv4Addr,
-  pub netmask: Ipv4Addr,
-  pub mtu: u16,
-}
-
-#[derive(Debug, Clone)]
-pub struct TcpProxyConfig {
-  pub bind_port: u16,
-}
-
-#[derive(Debug, Clone)]
-pub struct UdpProxyConfig {
-  pub bind_port: u16,
-}
-
-#[derive(Debug, Clone)]
 pub struct Config {
   // tun interface configuration
-  pub tun_config: TunConfig,
-
-  // transparent proxy server config
-  pub tcp_proxy_config: TcpProxyConfig,
-
-  // udp proxy server config
-  pub udp_proxy_config: UdpProxyConfig,
-
-  // address to the socks5 server
-  pub socks_server_addr: SocketAddr,
+  pub ip: Ipv4Addr,
+  pub netmask: Ipv4Addr,
+  pub mtu: u16,
+  // a dummy ip address reserved for internal use
+  pub dummy_ip: Ipv4Addr,
+  // socks server address
+  pub socks_server: SocketAddr,
+  // port for internal tcp/udp proxy
+  pub udp_port: u16,
+  pub tcp_port: u16,
 }

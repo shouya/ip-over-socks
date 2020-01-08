@@ -5,14 +5,14 @@ use std::net::SocketAddr;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
-#[structopt(about = "Forward TCP/UDP (L3) packets to a Socks5 Proxy (L4)")]
+#[structopt(about = "Tunnel TCP/UDP (L3) packets via a Socks5 Proxy (L4)")]
 pub struct CliConfig {
   /// The address space for the device
   ///
   /// The first available address will get assigned to the device, the second
-  /// address will be used by the internal proxies, Therefore, you need to
-  /// assign it a network space to support at least 2 hosts. In other words, the
-  /// prefix needs to be smaller than /31.
+  /// address will be taken as a dummy address for internal use. Therefore, you
+  /// need to assign it a network space to support at least 2 hosts. In other
+  /// words, the prefix needs to be smaller than /31.
   #[structopt(short, long, default_value = "10.0.0.1/16")]
   net: Ipv4Net,
 
@@ -20,10 +20,10 @@ pub struct CliConfig {
   #[structopt(short, long, default_value = "1490")]
   mtu: u16,
 
-  /// Address to the socks5 proxy
+  /// Address to the socks5 server
   ///
   /// The proxy must support CONNECT and UDP ASSOCIATE methods and do not have authentication.
-  socks_proxy: SocketAddr,
+  socks_server: SocketAddr,
 
   /// Port for internal TCP proxy
   #[structopt(short, long, default_value = "10001")]
@@ -36,25 +36,15 @@ pub struct CliConfig {
 
 impl Into<Config> for CliConfig {
   fn into(self) -> Config {
-    use crate::config::*;
-    let tcp_config = TcpProxyConfig {
-      bind_port: self.tcp_port,
-    };
-    let udp_config = UdpProxyConfig {
-      bind_port: self.udp_port,
-    };
-    let tun_config = TunConfig {
-      ip: self.net.hosts().nth(0).expect("Network too small"),
-      dummy_ip: self.net.hosts().nth(1).expect("Network too small"),
+    let mut hosts = self.net.hosts();
+    Config {
+      ip: hosts.next().expect("network is too small"),
+      dummy_ip: hosts.next().expect("network is too small"),
       netmask: self.net.netmask(),
       mtu: self.mtu,
-    };
-
-    Config {
-      tcp_proxy_config: tcp_config,
-      udp_proxy_config: udp_config,
-      tun_config: tun_config,
-      socks_server_addr: self.socks_proxy,
+      tcp_port: self.tcp_port,
+      udp_port: self.udp_port,
+      socks_server: self.socks_server,
     }
   }
 }

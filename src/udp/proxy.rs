@@ -26,11 +26,10 @@ impl Proxy {
   ) -> Result<Self> {
     let nat_table = nat_table.clone();
 
-    let udp_conf = &conf.udp_proxy_config;
-    let bind_addr = (conf.tun_config.ip, udp_conf.bind_port);
+    let bind_addr = (conf.ip, conf.udp_port);
     let socket = UdpSocket::bind(bind_addr).await?;
-    let socks_client = SocksClient::new(conf.socks_server_addr);
-    let src_ip = conf.tun_config.ip.into();
+    let socks_client = SocksClient::new(conf.socks_server);
+    let src_ip = conf.ip.into();
     let dispatcher = Dispatcher::setup(packet_sink, socks_client);
 
     Ok(Self {

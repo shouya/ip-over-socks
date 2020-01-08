@@ -18,12 +18,11 @@ pub struct Dev(Framed<rust_tun::DeviceAsync, TunPacketCodec>);
 
 impl Dev {
   pub async fn setup(config: &Config) -> Result<Self> {
-    let Config { tun_config, .. } = config;
     let mut conf = rust_tun::Configuration::default();
     conf
-      .address(tun_config.ip)
-      .netmask(tun_config.netmask)
-      .mtu(tun_config.mtu as i32)
+      .address(config.ip)
+      .netmask(config.netmask)
+      .mtu(config.mtu as i32)
       .up();
 
     #[cfg(target_os = "linux")]

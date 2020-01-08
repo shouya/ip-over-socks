@@ -1,4 +1,4 @@
-use etherparse::IpHeader::{Version4};
+use etherparse::IpHeader::Version4;
 use etherparse::TransportHeader::{Tcp, Udp};
 use std::net::Ipv4Addr;
 
@@ -20,10 +20,10 @@ pub struct Rewriter {
 impl Rewriter {
   pub fn setup(conf: &Config, tcp_nat: &NatTable, udp_nat: &NatTable) -> Self {
     Self {
-      ip: conf.tun_config.ip,
-      dummy_ip: conf.tun_config.dummy_ip,
-      tcp_proxy_port: conf.tcp_proxy_config.bind_port,
-      udp_proxy_port: conf.udp_proxy_config.bind_port,
+      ip: conf.ip,
+      dummy_ip: conf.dummy_ip,
+      tcp_proxy_port: conf.tcp_port,
+      udp_proxy_port: conf.udp_port,
       tcp_nat: tcp_nat.clone(),
       udp_nat: udp_nat.clone(),
     }

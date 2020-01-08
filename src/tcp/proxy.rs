@@ -22,9 +22,9 @@ pub struct Proxy {
 
 impl Proxy {
   pub async fn setup(conf: &Config, nat_table: &NatTable) -> Result<Self> {
-    let bind_addr = (conf.tun_config.ip, conf.tcp_proxy_config.bind_port);
+    let bind_addr = (conf.ip, conf.tcp_port);
     let listener = TcpListener::bind(bind_addr).await?;
-    let socks_client = SocksClient::new(conf.socks_server_addr);
+    let socks_client = SocksClient::new(conf.socks_server);
     let nat_table = nat_table.clone();
 
     Ok(Proxy {
