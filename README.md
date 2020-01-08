@@ -1,9 +1,9 @@
 # IP over Socks
 
 This project implements a method to tunnel IP traffic (spec. TCP & UDP) over a
-Socks5 proxy that supports both TCP CONNECT and UDP ASSOCIATE method.
+SOCKS5 proxy that supports both CONNECT and UDP ASSOCIATE methods.
 
-The method is described by the author of fqrouter project in [this post (Chinese)](https://fqrouter.tumblr.com/post/51474945203/socks%E4%BB%A3%E7%90%86%E8%BD%ACvpn).
+The implemented method is described by the author of fqrouter project in [this post (Chinese)](https://fqrouter.tumblr.com/post/51474945203/socks%E4%BB%A3%E7%90%86%E8%BD%ACvpn).
 
 ## Usage
 
